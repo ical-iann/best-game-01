@@ -5,7 +5,7 @@
 import { FIELD, SHOT_SECONDS, SKIFF } from './config.js';
 import { EVENT_OVER, EVENT_WAVE, EVENT_WIN } from './world.js';
 import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE, SCREEN_UPGRADE, SCREEN_WIN } from './render.js';
-import { rollUpgrades } from './upgrades.js';
+import { applyUpgrade, rollUpgrades } from './upgrades.js';
 import { createRandom } from './random.js';
 
 const SAMPLE = 1 / 30;
@@ -49,7 +49,7 @@ function autopilot(state, careful) {
     fy += (FIELD.height / 2 - player.y) / 400;
   }
   if (careful) {
-    for (const list of [state.mines, state.drones, state.darters, state.splitters, state.minis]) {
+    for (const list of [state.mines, state.drones, state.darters, state.splitters, state.minis, state.stingers]) {
       const threat = nearest(state, list, player.x, player.y);
       if (threat) {
         const dx = player.x - threat.x;
@@ -60,6 +60,21 @@ function autopilot(state, careful) {
           fx += (dx / d) * push;
           fy += (dy / d) * push;
         }
+      }
+    }
+    // Plasma bolts fly straight and fast: shy away from their line, not just
+    // their position — dodge sideways to the bolt's travel.
+    for (const bolt of state.bolts) {
+      if (!bolt.active) continue;
+      const dx = player.x - bolt.x;
+      const dy = player.y - bolt.y;
+      const d = Math.hypot(dx, dy) || 1;
+      if (d < 150) {
+        const speed = Math.hypot(bolt.vx, bolt.vy) || 1;
+        const side = (-bolt.vy / speed) * 2.4 + (dx / d) * 0.8;
+        const sideY = (bolt.vx / speed) * 2.4 + (dy / d) * 0.8;
+        fx += side;
+        fy += sideY;
       }
     }
     if (state.boss && state.boss.active) {
@@ -96,6 +111,15 @@ function autopilot(state, careful) {
       const d = Math.hypot(state.boss.x - player.x, state.boss.y - player.y);
       if (d < SKIFF.pulseRadius + 42 && player.energy >= SKIFF.pulseCost) pulse = true;
     }
+    // Pulse to burn an incoming bolt out of the air.
+    if (!pulse) {
+      for (const bolt of state.bolts) {
+        if (bolt.active && Math.hypot(bolt.x - player.x, bolt.y - player.y) < SKIFF.pulseRadius && player.energy >= SKIFF.pulseCost) {
+          pulse = true;
+          break;
+        }
+      }
+    }
   }
   return { thrust, pulse };
 }
@@ -116,6 +140,9 @@ export function stageShot(name, world) {
   const careful = name !== 'over';
   // The win scene plays a careful run all the way to the Warden's fall; the
   // upgrade scene stops at the first cleared wave with its choices open.
+  // The win run takes the first upgrade on offer each wave, like a real
+  // player would — without upgrades the staged run cannot survive wave 4.
+  const upgradeRandom = createRandom(7 ^ 0x9e3779b9);
   const maxSeconds = name === 'win' ? 900 : name === 'over' ? SHOT_SECONDS.over : 240;
   let choices = null;
   for (let index = 0; index < maxSeconds / SAMPLE; index += 1) {
@@ -130,7 +157,8 @@ export function stageShot(name, world) {
         choices = rollUpgrades(createRandom(7));
         return { screen: SCREEN_UPGRADE, best: state.score, choices };
       }
-      // A wave cleared on the way to the win: keep flying.
+      // A wave cleared on the way to the win: take an upgrade and keep flying.
+      if (name === 'win') applyUpgrade(state, rollUpgrades(upgradeRandom)[0].id);
     }
     if (events & EVENT_OVER) break;
     if (name === 'play' && state.time >= SHOT_SECONDS.play) break;

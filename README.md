@@ -25,7 +25,10 @@ build dir on 18 Nov 2026 and resubmitted (commit
 ecced4106ffbaba7172a08e51827699ca0582095 "Hopeful Lantern", receipt
 01a1ea40-4d1d-7745-b5c6-d9cdbe7ad90b); judge score 691,333, competition rank
 114 of 182, top-100 line ~699,775. Improved again in the build dir on 18 Nov
-2026 (second pass) — see Verification below — ready for resubmission.
+2026 (second pass) — see Verification below — and resubmitted; the current
+best graded entry ("Hopeful Quill") scores 721,991. Improved a third time in
+the build dir on 18 Nov 2026 (third pass) — see Verification below — ready
+for resubmission.
 
 ## The game
 
@@ -33,12 +36,16 @@ Fly a salvage skiff through a neon asteroid field. Collect pulsing nova shards t
 build a combo multiplier, dodge drifting void mines, and outrun hunter drones
 that chase you once you come close. A pulse blast (Space) clears threats around
 you but spends energy that recharges over time. Darters weave in fast from wave
-2, splitters crack into two minis from wave 3, and wave 5 ends with the Void
-Warden — a three-hit boss that launches its own drones. Shield and surge cells
-drift in to save or refuel you, and every cleared wave offers a choice of three
+2, splitters crack into two minis from wave 3, and stingers hold off at range
+from wave 3 and shoot slow plasma bolts you can dodge — or burn out of the air
+with a pulse. Wave 5 ends with the Void Warden — a three-hit boss that launches
+its own drones. Shield and surge cells drift in to save or refuel you, every
+shard you collect feeds the Nova Rush meter (8 shards fire 8 seconds of double
+score and double pulse recharge), and every cleared wave offers a choice of three
 upgrades (plating, wide pulse, surge coil, thrusters, magnet, overcharge) that
 shape the rest of the run. Clear 5 waves to win the run; after the win you can
-keep flying endless, or restart.
+keep flying endless, and the deeper you go the more every point is worth (+5%
+per wave past wave 5, shown as DEPTH × in the HUD).
 
 - **Goal:** clear wave 5 and beat the Void Warden (then keep going endless if you want).
 - **Difficulty:** pick on the menu before a run — 1, 2 or 3, or click.
@@ -46,10 +53,12 @@ keep flying endless, or restart.
   is the intended hunt (3 hull, 3-hit Warden); Expert is faster, fields more
   hunters, and the Warden takes 4 hits. The choice is remembered between visits.
 - **Score:** shards pay 10 × combo multiplier (up to ×6), a drone destroyed by
-  a pulse pays 25, a darter 40, a splitter 30, a mini 15, the Warden 300, a
-  cleared wave pays 100 + 25 per wave.
-- **Lose:** the skiff has 3 hull (4 on Relaxed). A mine or a foe costs 1 hull and breaks your
-  combo — unless an aegis shield eats the hit. At 0 hull the run ends.
+  a pulse pays 25, a darter 40, a splitter 30, a mini 15, a stinger 50, the
+  Warden 300, a cleared wave pays 100 + 25 per wave. While Nova Rush burns,
+  every point doubles; past wave 5, endless depth adds 5% per wave.
+- **Lose:** the skiff has 3 hull (4 on Relaxed). A mine, a foe or a plasma bolt
+  costs 1 hull and breaks your combo — unless an aegis shield eats the hit.
+  At 0 hull the run ends.
 - **Controls:** WASD / arrows to fly (momentum + drag), Space for the pulse
   blast, 1 / 2 / 3 or click to pick an upgrade, P to pause, M to mute, R to
   restart, C to continue after a win. On the menu, 1 / 2 / 3 (or a click)
@@ -72,12 +81,15 @@ keep flying endless, or restart.
   - `game/src/` — one job each: `config.js` (every tuned number, plus the
     three difficulties and the localStorage keys), `random.js`
     (seeded generator), `world.js` (simulation: skiff, shards, mines, drones,
-    darters, splitters, minis, the Warden, cells, waves, combo, upgrades —
+    darters, splitters, minis, stingers and their plasma bolts, the Warden,
+    cells, waves, combo, Nova Rush, endless depth scoring, upgrades —
     with difficulty scaling and per-run stats),
     `upgrades.js` (the six wave-clear upgrades), `input.js` (keyboard +
-    pointer), `render.js` (canvas, HUD, six screens, difficulty and settings
-    buttons), `audio.js` (synthesized sounds, the generative bass + melody
-    loop, separate music / SFX mutes), `shots.js` (staged screenshot scenes
+    pointer), `render.js` (canvas, HUD with the rush meter and the endless
+    depth readout, six screens, difficulty and settings buttons), `audio.js`
+    (synthesized sounds, the generative bass + melody
+    loop, separate music / SFX mutes, plus a rush arpeggio and a stinger shot
+    zap), `shots.js` (staged screenshot scenes
     with an autopilot), `main.js` (boot + fixed-step loop, settings and career
     stats in localStorage).
 - `main.ts` — Node 22, stdlib only: copies `game/` + `screenshots/` to `/output`
@@ -85,11 +97,79 @@ keep flying endless, or restart.
 - `serve.ts` — tiny static server for local play: `node serve.ts`, then
   http://localhost:8080.
 - `screenshots/` — 4 real renders, 1280×720: `1-menu.png` (title, difficulty
-  and sound controls), `2-play.png` (wave 2, drones + mines + asteroids),
-  `3-win.png` (victory, score 2800, run stats), `4-over.png` (game over,
+  and sound controls, stingers and Nova Rush named), `2-play.png` (wave 2,
+  drones + mines + asteroids, rush meter and shield ring visible),
+  `3-win.png` (victory, score 3185, run stats), `4-over.png` (game over,
   score 135, run stats). Staged with `?shot=menu|play|win|over&seed=7`.
+  The play shot is staged at 60 s of play: at 72–75 s the frame lands in
+  wave 3 with a stinger in it, but the busier field pushes the PNG over the
+  256 KiB cap, so the shot stays at 60 s.
 - `vendor/makefun-game.ts` — the kit's copy, unchanged.
 - `kit/` + `kit.tar.gz` — working material, not part of the entry.
+
+## Verification (18 Nov 2026, local — third improvement pass)
+
+The best graded entry ("Hopeful Quill") scores 721,991 and the top-100 line is
+~898,978 — a gap of ~177,000, bigger than either earlier pass gained — so this
+pass adds gameplay-visible depth instead of settings: no bundle, check, push or
+submit was run here.
+
+- What changed: a new foe, the **stinger** (from wave 3, wave 4 on Relaxed) —
+  it holds off at ~300 px, strafes, telegraphs each shot with a charging glow,
+  then fires a slow plasma bolt (150 px/s, slower than the skiff) at where the
+  skiff was; bolts hurt on touch, fizzle after 6 s, and a pulse burns them out
+  of the air; a stinger pays 50 on a pulse kill. **Nova Rush** — every shard
+  fills a meter shown under the pulse bar; 8 shards fire 8 s of double score
+  and double pulse recharge, with a gold banner, a rush arpeggio and a
+  "NOVA RUSH ×2" popup. **Endless depth scoring** — past the wave-5 win every
+  point is worth +5% per wave (×1.10 on wave 7), shown as DEPTH × in the HUD.
+  The menu names both new systems; the play shot is staged at 60 s (see Files).
+  The `window.__game` debug handle now also carries the skiff position, the
+  nearest shard and threat, and the live stinger / bolt / rush counts, so the
+  play-tests can steer and assert on the new systems.
+- Balance was tuned, not just added: the first build let stingers kite a wave
+  forever (careful pilots won 0/10 — the run stalled, never died) and then
+  fired too often (careful Standard 7/10, one 675 s run). The fix: a stinger
+  closes to pulse range when it is one of the last two foes, its hold distance
+  shrinks 5 px/s as it ages so a wave always ends, it fires every 5 s (not
+  3.6 s), and at most 4 bolts fly at once.
+- Node simulation of the real world.js, 10 seeds × 3 difficulties × 3 pilots:
+  careful pilots win 10/10 Relaxed (136–298 s, 0 hits), 9/10 Standard
+  (168–223 s, 0–3 hits; the one loss is seed 63 on wave 4), 7/10 Expert
+  (149–248 s, 0–4 hits; losses on waves 4–5); sloppy pilots win 10/10 Relaxed,
+  10/10 Standard, 8/10 Expert; careless pilots die on wave 1–2 in 15–91 s on
+  every difficulty. Rush fired 9–20 times per 10 careful/sloppy runs and
+  106–200 bolts were fired per 10 runs, so both new systems engage in normal
+  play. Endless verified: a careful Standard win (score 3,585) followed by 90 s
+  of endless reaches wave 7 at score 5,656 (+2,071) with depth ×1.10.
+- Play-tested live in headless Chromium (Playwright headless shell), twice:
+  menu → Digit3 picks Expert → click Relaxed → Digit2 back to Standard →
+  start → upgrade screens on waves 2 and 3 → P pauses → music pill toggled
+  on the pause screen → R restarts a fresh run from pause → bot play reached
+  wave 3 (score 1,230–1,395), saw a stinger and a bolt live, and Nova Rush
+  fired → M mutes everything. Zero console/page errors throughout. A second
+  live run sat still until the hunters killed the skiff (game over, wave 2,
+  score 125): localStorage then held best 125 and 1 run with bestWave 2.
+- Screenshots: 4 PNGs, 1280×720, 228–252 KiB each (< 256 KiB), regenerated
+  from the new build at `?shot=menu|play|win|over&seed=7`. All five `?shot=`
+  scenes (menu, play, win, over, upgrade) render with `__shotReady` and zero
+  errors. One real bug found and fixed in testing: the staged win scene first
+  came back as FIELD LOST on wave 4 — the staged run took no upgrades, and
+  without them it cannot survive wave 4 now — so the staged win run takes the
+  first upgrade on offer each wave, like a real player, and now wins at score
+  3,185 in 6:02. `shots.json` unchanged (same 4-shot set, seed 7).
+- Static checks: every `game/src/*.js` parses (`node --check`); no external
+  references anywhere under game/; game/ is 106,990 bytes in 10 files,
+  screenshots 979,189 bytes total, so the dossier stays under the 1.5 MiB cap.
+  vendor/ untouched (sha256 dc67187521b24025ff952f8c231485a6eb92d6d71d29edd2a08154ffb4376129).
+- Honest assessment: this pass adds two systems the judge can see and feel in
+  the first two minutes (a shooter foe with telegraphed bolts, a rush meter
+  that doubles score) and a reason to keep playing after the win (endless
+  depth scoring). Whether that closes a 177,000-point gap cannot be measured
+  locally — the judge's score is not reproducible here — and the gap is larger
+  than the +99k and +31k the first two passes gained, so it plausibly narrows
+  the gap without plausibly closing all of it on its own. The entry is
+  stronger, complete and balanced; it is not a guaranteed top-100 entry.
 
 ## Verification (18 Nov 2026, local — second improvement pass)
 

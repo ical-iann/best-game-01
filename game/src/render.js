@@ -1,7 +1,7 @@
 // Nova Harvest — everything the player sees: the neon field, the skiff, the HUD and
 // the six screens (title, play, paused, upgrade, game over, victory). It only
 // paints; it never changes the world.
-import { BOSS, CELL, COLORS, DARTER, DIFFICULTY, DIFFICULTY_IDS, DRONE, FIELD, MINE, MINI, SHARD, SKIFF, SPLITTER } from './config.js';
+import { BOLT, BOSS, CELL, COLORS, DARTER, DEPTH, DIFFICULTY, DIFFICULTY_IDS, DRONE, FIELD, MINE, MINI, RUSH, SHARD, SKIFF, SPLITTER, STINGER, WAVE } from './config.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -212,6 +212,55 @@ function drawMini(ctx, mini) {
   ctx.lineTo(-r, r * 0.7);
   ctx.lineTo(-r, -r * 0.7);
   ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawStinger(ctx, stinger) {
+  const r = STINGER.radius;
+  ctx.save();
+  ctx.translate(stinger.x, stinger.y);
+  ctx.rotate(Math.atan2(stinger.vy, stinger.vx) || 0);
+  // While it charges a shot the whole body flares: the telegraph the player
+  // reads before the bolt leaves.
+  const charging = stinger.charging > 0;
+  const flare = charging ? 1 + (1 - stinger.charging / STINGER.telegraph) * 0.5 : 1;
+  ctx.shadowColor = COLORS.stinger;
+  ctx.shadowBlur = charging ? 26 : 14;
+  ctx.fillStyle = COLORS.stinger;
+  ctx.beginPath();
+  ctx.moveTo(r * flare + 6, 0);
+  ctx.lineTo(-r * 0.7, r * 0.9);
+  ctx.lineTo(-r * 0.3, 0);
+  ctx.lineTo(-r * 0.7, -r * 0.9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = charging ? '#ffffff' : COLORS.stingerCore;
+  ctx.beginPath();
+  ctx.arc(r * 0.25, 0, r * (charging ? 0.42 : 0.3), 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawBolt(ctx, bolt) {
+  const r = BOLT.radius;
+  ctx.save();
+  ctx.translate(bolt.x, bolt.y);
+  ctx.rotate(Math.atan2(bolt.vy, bolt.vx));
+  ctx.shadowColor = COLORS.bolt;
+  ctx.shadowBlur = 16;
+  ctx.fillStyle = COLORS.bolt;
+  ctx.beginPath();
+  ctx.moveTo(r + 5, 0);
+  ctx.lineTo(-r, r * 0.75);
+  ctx.lineTo(-r, -r * 0.75);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = COLORS.boltCore;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.4, 0, TAU);
   ctx.fill();
   ctx.restore();
 }
@@ -447,6 +496,8 @@ export function createRenderer(canvas) {
     for (const darter of state.darters) drawDarter(ctx, darter);
     for (const splitter of state.splitters) drawSplitter(ctx, splitter);
     for (const mini of state.minis) drawMini(ctx, mini);
+    for (const stinger of state.stingers) drawStinger(ctx, stinger);
+    for (const bolt of state.bolts) drawBolt(ctx, bolt);
     if (state.boss && state.boss.active) drawBoss(ctx, state.boss);
     for (const particle of state.particles) {
       ctx.globalAlpha = Math.max(0, particle.life / particle.maxLife);
@@ -512,6 +563,13 @@ export function createRenderer(canvas) {
     ctx.font = '700 13px ui-sans-serif, system-ui, sans-serif';
     ctx.fillStyle = COLORS.gold;
     ctx.fillText(diffLabel, FIELD.width - 24, 88);
+    // Past the win wave, the endless depth multiplier shows under the foes:
+    // the deeper the run, the more every point is worth.
+    if (state.wave > WAVE.winWave) {
+      const depth = 1 + DEPTH.perWave * (state.wave - WAVE.winWave);
+      ctx.fillStyle = COLORS.rush;
+      ctx.fillText(`DEPTH ×${depth.toFixed(2)}`, FIELD.width - 24, 108);
+    }
     ctx.restore();
     drawHull(ctx, state.player.hull, state.player.maxHull);
     // An aegis shield shows as a ring beside the hull pips.
@@ -554,6 +612,24 @@ export function createRenderer(canvas) {
     ctx.textAlign = 'left';
     ctx.fillText(state.player.energy >= SKIFF.pulseCost ? 'PULSE READY — SPACE' : 'PULSE CHARGING…', barX, barY - 8);
     ctx.restore();
+    // The Nova Rush meter: shards fill it, a full meter fires double score.
+    const rush = state.rush ?? { charge: 0, active: 0 };
+    const rushY = barY - 30;
+    ctx.save();
+    ctx.fillStyle = 'rgba(120, 140, 180, 0.25)';
+    ctx.beginPath();
+    ctx.roundRect(barX, rushY, barW, barH, 6);
+    ctx.fill();
+    const rushFill = rush.active > 0 ? 1 : rush.charge / RUSH.need;
+    ctx.fillStyle = rush.active > 0 ? COLORS.rush : COLORS.shard;
+    ctx.beginPath();
+    ctx.roundRect(barX, rushY, barW * rushFill, barH, 6);
+    ctx.fill();
+    ctx.font = '600 13px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillStyle = rush.active > 0 ? COLORS.rush : COLORS.muted;
+    ctx.textAlign = 'left';
+    ctx.fillText(rush.active > 0 ? `NOVA RUSH ×2 — ${Math.ceil(rush.active)}s` : `RUSH ${rush.charge}/${RUSH.need} SHARDS`, barX, rushY - 8);
+    ctx.restore();
     // Combo badge, only while a chain is alive.
     if (state.combo >= 2) {
       ctx.save();
@@ -563,6 +639,17 @@ export function createRenderer(canvas) {
       ctx.shadowColor = COLORS.gold;
       ctx.shadowBlur = 14;
       ctx.fillText(`COMBO x${state.multiplier}  (${state.combo})`, cx, 96);
+      ctx.restore();
+    }
+    // While Nova Rush burns, a gold banner across the top says so.
+    if (state.rush && state.rush.active > 0) {
+      ctx.save();
+      ctx.font = '800 26px ui-sans-serif, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = COLORS.rush;
+      ctx.shadowColor = COLORS.rush;
+      ctx.shadowBlur = 16;
+      ctx.fillText('★ NOVA RUSH ×2 ★', cx, 128);
       ctx.restore();
     }
     // Onboarding: the first seconds of wave 1 say what to do, then get out
@@ -588,7 +675,7 @@ export function createRenderer(canvas) {
     ctx.restore();
     centerText(ctx, 'Salvage the field. Dodge the mines. Outrun the hunters.', cx, 222, 21, COLORS.muted, 600);
     centerText(ctx, 'WASD / ARROWS — fly      SPACE — pulse blast', cx, 260, 19, COLORS.text, 600);
-    centerText(ctx, 'Collect shards · Grab shield and surge cells · Beat the Void Warden', cx, 288, 19, COLORS.text, 600);
+    centerText(ctx, 'Collect shards · 8 fill the NOVA RUSH (double score) · Stingers shoot plasma bolts', cx, 288, 19, COLORS.text, 600);
     centerText(ctx, 'Clear a wave, pick an upgrade — 1, 2 or 3 · P — pause · M — mute · R — restart', cx, 314, 17, COLORS.muted, 600);
     centerText(ctx, 'CHOOSE DIFFICULTY — press 1, 2 or 3, or click', cx, 352, 16, COLORS.gold, 700);
     DIFFICULTY_IDS.forEach((id, index) => {

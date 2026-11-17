@@ -195,6 +195,16 @@ export function createAudio() {
     cell() {
       tone(880, 0.1, 'sine', 0.3, 1174);
     },
+    shot() {
+      // A stinger firing: a short descending zap, quieter than a hit.
+      tone(920, 0.12, 'square', 0.12, 320);
+    },
+    rush() {
+      // Nova Rush firing: a rising four-note arpeggio.
+      [659, 784, 988, 1318].forEach((freq, index) => {
+        setTimeout(() => tone(freq, 0.16, 'triangle', 0.35), index * 70);
+      });
+    },
     wave() {
       tone(523, 0.12, 'sine', 0.35);
       setTimeout(() => tone(659, 0.12, 'sine', 0.35), 110);

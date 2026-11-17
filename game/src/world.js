@@ -3,7 +3,7 @@
 // The world advances in fixed steps and nothing here touches the screen or the
 // sound; it reports what happened as event bits so the caller can announce and
 // play them.
-import { BOSS, CELL, COLORS, DARTER, DIFFICULTY, DRONE, FIELD, MINE, MINI, SHARD, SKIFF, SPLITTER, WAVE } from './config.js';
+import { BOLT, BOSS, CELL, COLORS, DARTER, DEPTH, DIFFICULTY, DRONE, FIELD, MINE, MINI, RUSH, SHARD, SKIFF, SPLITTER, STINGER, WAVE } from './config.js';
 
 export const EVENT_HIT = 1;
 export const EVENT_OVER = 2;
@@ -14,6 +14,8 @@ export const EVENT_SHARD = 32;
 export const EVENT_SHIELD = 64;
 export const EVENT_BOSS = 128;
 export const EVENT_CELL = 256;
+export const EVENT_RUSH = 512; // the Nova Rush meter just filled
+export const EVENT_SHOT = 1024; // a stinger just fired a plasma bolt
 
 const TAU = Math.PI * 2;
 
@@ -60,6 +62,9 @@ export function createWorld(random, difficultyId = 'standard') {
     darters: [],
     splitters: [],
     minis: [],
+    stingers: [],
+    bolts: [],
+    rush: { charge: 0, active: 0 },
     boss: null,
     cells: [],
     particles: [],
@@ -93,6 +98,15 @@ export function createWorld(random, difficultyId = 'standard') {
 
   function floatText(x, y, text, color) {
     state.floats.push({ x, y, text, life: 1.1, color });
+  }
+
+  // Every point the run pays runs through here: Nova Rush doubles it, and
+  // endless depth adds 5% per wave past the win wave, so a deep endless run
+  // is worth more than the same kills on wave 2.
+  function scoreGain(base) {
+    const rushMul = state.rush.active > 0 ? 2 : 1;
+    const depthMul = state.wave > WAVE.winWave ? 1 + DEPTH.perWave * (state.wave - WAVE.winWave) : 1;
+    return Math.round(base * rushMul * depthMul);
   }
 
   function spawnShard() {
@@ -157,6 +171,24 @@ export function createWorld(random, difficultyId = 'standard') {
     state.splitters.push({ x: spot.x, y: spot.y, vx: 0, vy: 0, active: true, phase: random.next() * TAU, grace: 1.5 });
   }
 
+  function spawnStinger() {
+    const spot = edgePoint();
+    state.stingers.push({ x: spot.x, y: spot.y, vx: 0, vy: 0, active: true, phase: random.next() * TAU, grace: 1.5, age: 0, timer: random.range(1.5, 3), charging: 0 });
+  }
+
+  function spawnBolt(from) {
+    const player = state.player;
+    const dx = player.x - from.x;
+    const dy = player.y - from.y;
+    const d = Math.hypot(dx, dy) || 1;
+    state.bolts.push({
+      x: from.x, y: from.y,
+      vx: (dx / d) * BOLT.speed,
+      vy: (dy / d) * BOLT.speed,
+      life: BOLT.life, active: true,
+    });
+  }
+
   function spawnMini(x, y) {
     const angle = random.next() * TAU;
     state.minis.push({
@@ -192,14 +224,17 @@ export function createWorld(random, difficultyId = 'standard') {
     const drones = Math.max(2, WAVE.droneBase + WAVE.dronePerWave * (wave - 1) + difficulty.droneDelta);
     const darterWave = 2 + difficulty.darterDelay;
     const splitterWave = 3 + difficulty.splitterDelay;
+    const stingerWave = 3 + difficulty.stingerDelay;
     const darters = wave >= darterWave ? WAVE.darterPerWave * (wave - darterWave + 1) : 0;
     const splitters = wave >= splitterWave ? WAVE.splitterPerWave * (wave - splitterWave + 1) : 0;
+    const stingers = wave >= stingerWave ? WAVE.stingerPerWave * (wave - stingerWave + 1) : 0;
     const bossWave = wave % WAVE.winWave === 0;
     for (let index = 0; index < mines; index += 1) spawnMine();
     spawnQueue = [];
     for (let index = 0; index < drones; index += 1) spawnQueue.push('drone');
     for (let index = 0; index < darters; index += 1) spawnQueue.push('darter');
     for (let index = 0; index < splitters; index += 1) spawnQueue.push('splitter');
+    for (let index = 0; index < stingers; index += 1) spawnQueue.push('stinger');
     // Shuffle the arrivals so the wave never comes in one kind at a time.
     for (let index = spawnQueue.length - 1; index > 0; index -= 1) {
       const other = random.int(0, index + 1);
@@ -272,6 +307,9 @@ export function createWorld(random, difficultyId = 'standard') {
     state.darters = [];
     state.splitters = [];
     state.minis = [];
+    state.stingers = [];
+    state.bolts = [];
+    state.rush = { charge: 0, active: 0 };
     state.boss = null;
     state.cells = [];
     state.particles = [];
@@ -304,6 +342,14 @@ export function createWorld(random, difficultyId = 'standard') {
         burst(mine.x, mine.y, COLORS.mine, 10, 130);
       }
     }
+    // The blast also burns incoming plasma bolts out of the air.
+    for (const bolt of state.bolts) {
+      if (!bolt.active) continue;
+      if (dist2(bolt.x, bolt.y, player.x, player.y) < (radius + BOLT.radius) ** 2) {
+        bolt.active = false;
+        burst(bolt.x, bolt.y, COLORS.bolt, 6, 110);
+      }
+    }
     const pulseKill = (list, kindRadius, score, color, onKill) => {
       for (const foe of list) {
         if (!foe.active) continue;
@@ -311,10 +357,11 @@ export function createWorld(random, difficultyId = 'standard') {
           foe.active = false;
           kills += 1;
           state.stats.kills += 1;
-          state.score += score;
+          const gained = scoreGain(score);
+          state.score += gained;
           state.foesLeft -= 1;
           burst(foe.x, foe.y, color, 12, 150);
-          floatText(foe.x, foe.y - 10, `+${score}`, color);
+          floatText(foe.x, foe.y - 10, `+${gained}`, color);
           if (onKill) onKill(foe);
         }
       }
@@ -322,6 +369,7 @@ export function createWorld(random, difficultyId = 'standard') {
     pulseKill(state.drones, DRONE.radius, DRONE.score, COLORS.drone);
     pulseKill(state.darters, DARTER.radius, DARTER.score, COLORS.darter);
     pulseKill(state.minis, MINI.radius, MINI.score, COLORS.mini);
+    pulseKill(state.stingers, STINGER.radius, STINGER.score, COLORS.stinger);
     pulseKill(state.splitters, SPLITTER.radius, SPLITTER.score, COLORS.splitter, (foe) => {
       spawnMini(foe.x - 14, foe.y);
       spawnMini(foe.x + 14, foe.y);
@@ -335,12 +383,13 @@ export function createWorld(random, difficultyId = 'standard') {
       if (boss.hp <= 0) {
         boss.active = false;
         state.boss = null;
-        state.score += BOSS.score;
+        const gained = scoreGain(BOSS.score);
+        state.score += gained;
         state.stats.kills += 1;
         state.foesLeft -= 1;
         burst(boss.x, boss.y, COLORS.boss, 40, 280);
         burst(boss.x, boss.y, COLORS.gold, 24, 220);
-        floatText(boss.x, boss.y - 20, `WARDEN DOWN +${BOSS.score}`, COLORS.gold);
+        floatText(boss.x, boss.y - 20, `WARDEN DOWN +${gained}`, COLORS.gold);
         events |= EVENT_BOSS;
       } else {
         floatText(boss.x, boss.y - 20, `WARDEN ${boss.hp}/${boss.maxHp}`, COLORS.boss);
@@ -461,7 +510,10 @@ export function createWorld(random, difficultyId = 'standard') {
     if (player.y > FIELD.height - SKIFF.radius) { player.y = FIELD.height - SKIFF.radius; player.vy = -Math.abs(player.vy) * 0.5; }
     if (player.invuln > 0) player.invuln -= dt;
     if (player.pulseAge < 9) player.pulseAge += dt;
-    if (!attract) player.energy = Math.min(SKIFF.energyMax, player.energy + player.energyRecharge * dt);
+    // Nova Rush doubles the pulse recharge while it burns, and ticks down.
+    const rushOn = state.rush.active > 0;
+    if (rushOn) state.rush.active -= dt;
+    if (!attract) player.energy = Math.min(SKIFF.energyMax, player.energy + player.energyRecharge * (rushOn ? 2 : 1) * dt);
 
     // The combo chain lives only while pickups keep coming.
     if (state.comboTimer > 0) {
@@ -495,11 +547,22 @@ export function createWorld(random, difficultyId = 'standard') {
         state.stats.bestCombo = Math.max(state.stats.bestCombo, state.combo);
         state.comboTimer = SHARD.comboWindow;
         state.multiplier = Math.min(SHARD.comboMax, 1 + Math.floor(state.combo / SHARD.comboStep));
-        const gained = SHARD.score * state.multiplier;
+        const gained = scoreGain(SHARD.score * state.multiplier);
         state.score += gained;
         burst(shard.x, shard.y, COLORS.shard, 8, 120);
         floatText(shard.x, shard.y - 12, `+${gained}`, COLORS.shard);
         events |= EVENT_SHARD;
+        // Every shard feeds the rush meter; a full meter fires Nova Rush.
+        if (state.rush.active <= 0) {
+          state.rush.charge += 1;
+          if (state.rush.charge >= RUSH.need) {
+            state.rush.charge = 0;
+            state.rush.active = RUSH.duration;
+            floatText(player.x, player.y - 44, 'NOVA RUSH ×2', COLORS.rush);
+            burst(player.x, player.y, COLORS.rush, 16, 180);
+            events |= EVENT_RUSH;
+          }
+        }
       }
     }
     state.shards = state.shards.filter((shard) => shard.active);
@@ -582,6 +645,83 @@ export function createWorld(random, difficultyId = 'standard') {
     }
     state.minis = state.minis.filter((mini) => mini.active);
 
+    // Stingers hold off at range and shoot: they drift to their hold distance,
+    // strafe slowly, then telegraph a shot and fire a plasma bolt at where
+    // the skiff was. The bolt is slower than the skiff, so it can be dodged —
+    // and a pulse burns bolts out of the air.
+    for (const stinger of state.stingers) {
+      if (!stinger.active) continue;
+      stinger.phase += dt * 2;
+      stinger.age += dt;
+      if (stinger.grace > 0) stinger.grace -= dt;
+      const dx = player.x - stinger.x;
+      const dy = player.y - stinger.y;
+      const d = Math.hypot(dx, dy) || 1;
+      // It holds its shooting distance — unless it is one of the last foes
+      // left, when, like every other foe, it smells blood and closes in to
+      // pulse range instead of kiting the wave to a standstill. Either way
+      // the hold distance shrinks as the stinger ages, so a wave always ends.
+      const hold = state.foesLeft <= 2 ? 110 : Math.max(160, STINGER.holdRange - stinger.age * STINGER.holdDecay);
+      let mx = 0;
+      let my = 0;
+      if (d > hold + 50) { mx = dx / d; my = dy / d; }
+      else if (d < hold - 50) { mx = -dx / d; my = -dy / d; }
+      else {
+        const side = Math.sin(stinger.phase * 0.9);
+        mx = (-dy / d) * side;
+        my = (dx / d) * side;
+      }
+      const pace = STINGER.speed * speedMul * (state.foesLeft <= 2 ? 1.6 : 1);
+      stinger.vx += mx * pace * 1.6 * dt;
+      stinger.vy += my * pace * 1.6 * dt;
+      const v = Math.hypot(stinger.vx, stinger.vy);
+      if (v > pace) {
+        stinger.vx = (stinger.vx / v) * pace;
+        stinger.vy = (stinger.vy / v) * pace;
+      }
+      stinger.x += stinger.vx * dt;
+      stinger.y += stinger.vy * dt;
+      if (stinger.x < 20) { stinger.x = 20; stinger.vx = Math.abs(stinger.vx); }
+      if (stinger.x > FIELD.width - 20) { stinger.x = FIELD.width - 20; stinger.vx = -Math.abs(stinger.vx); }
+      if (stinger.y < 44) { stinger.y = 44; stinger.vy = Math.abs(stinger.vy); }
+      if (stinger.y > FIELD.height - 20) { stinger.y = FIELD.height - 20; stinger.vy = -Math.abs(stinger.vy); }
+      if (!attract && stinger.grace <= 0) {
+        if (stinger.charging > 0) {
+          stinger.charging -= dt;
+          if (stinger.charging <= 0) {
+            spawnBolt(stinger);
+            stinger.timer = STINGER.fireEvery;
+            events |= EVENT_SHOT;
+          }
+        } else {
+          stinger.timer -= dt;
+          if (stinger.timer <= 0 && d < STINGER.chase && state.bolts.filter((b) => b.active).length < STINGER.maxBolts) {
+            stinger.charging = STINGER.telegraph;
+          }
+        }
+        if (player.invuln <= 0) events |= touchFoe(stinger, STINGER.radius, dt);
+      }
+    }
+    state.stingers = state.stingers.filter((stinger) => stinger.active);
+
+    // Plasma bolts fly straight, fizzle after a few seconds, and hurt on touch.
+    for (const bolt of state.bolts) {
+      if (!bolt.active) continue;
+      bolt.life -= dt;
+      bolt.x += bolt.vx * dt;
+      bolt.y += bolt.vy * dt;
+      if (bolt.life <= 0 || bolt.x < 8 || bolt.x > FIELD.width - 8 || bolt.y < 36 || bolt.y > FIELD.height - 8) {
+        bolt.active = false;
+        continue;
+      }
+      if (!attract && player.invuln <= 0 && dist2(bolt.x, bolt.y, player.x, player.y) < (BOLT.radius + SKIFF.radius - 2) ** 2) {
+        bolt.active = false;
+        burst(bolt.x, bolt.y, COLORS.bolt, 10, 160);
+        events |= hurtPlayer(bolt);
+      }
+    }
+    state.bolts = state.bolts.filter((bolt) => bolt.active);
+
     // The Void Warden lumbers after the skiff and launches drones.
     const boss = state.boss;
     if (boss && boss.active) {
@@ -633,6 +773,7 @@ export function createWorld(random, difficultyId = 'standard') {
           if (kind === 'drone') spawnDrone();
           if (kind === 'darter') spawnDarter();
           if (kind === 'splitter') spawnSplitter();
+          if (kind === 'stinger') spawnStinger();
           const gap = Math.max(0.55, (WAVE.spawnGap - WAVE.spawnGapPerWave * (state.wave - 1)) * difficulty.spawnGapMul);
           spawnTimer = gap;
         }
@@ -640,7 +781,7 @@ export function createWorld(random, difficultyId = 'standard') {
         // The wave is clear: pay the bonus, open the next one, or win the run.
         // Only wave 5 wins: after continueEndless the run is past it, so later
         // boss waves just keep the run going.
-        const bonus = WAVE.clearBonus + WAVE.clearBonusPerWave * state.wave;
+        const bonus = scoreGain(WAVE.clearBonus + WAVE.clearBonusPerWave * state.wave);
         state.score += bonus;
         state.stats.wavesCleared += 1;
         floatText(player.x, player.y - 30, `WAVE ${state.wave} CLEAR +${bonus}`, COLORS.gold);

@@ -9,7 +9,7 @@
 import { BEST_KEY, DIFFICULTY, DIFFICULTY_IDS, SETTINGS_KEY, SKIFF, STATS_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createAudio } from './audio.js';
-import { createWorld, EVENT_BOSS, EVENT_CELL, EVENT_HIT, EVENT_OVER, EVENT_PULSE, EVENT_SHARD, EVENT_SHIELD, EVENT_WAVE, EVENT_WIN } from './world.js';
+import { createWorld, EVENT_BOSS, EVENT_CELL, EVENT_HIT, EVENT_OVER, EVENT_PULSE, EVENT_RUSH, EVENT_SHARD, EVENT_SHIELD, EVENT_SHOT, EVENT_WAVE, EVENT_WIN } from './world.js';
 import { ACTION_CHOICE_1, ACTION_CHOICE_2, ACTION_CHOICE_3, ACTION_CONFIRM, ACTION_CONTINUE, ACTION_MUTE, ACTION_PAUSE, ACTION_PULSE, ACTION_RESTART, createInput } from './input.js';
 import { createRenderer, DIFFICULTY_BUTTONS, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_UPGRADE, SCREEN_WIN, SETTINGS_BUTTONS, UPGRADE_CARDS } from './render.js';
 import { applyUpgrade, rollUpgrades } from './upgrades.js';
@@ -125,9 +125,36 @@ function runGame() {
   let last = performance.now();
 
   // The debug handle the play-tests read: the live screen and score, the foes
-  // still to clear, and the upgrade choices on offer, nothing else.
-  window.__game = { screen, score: 0, wave: 1, hull: SKIFF.hull, combo: 0, foesLeft: 0, upgrades: null, difficulty, musicOn: audio.musicOn, sfxOn: audio.sfxOn, best, runs: stats.runs, wins: stats.wins };
+  // still to clear, and the upgrade choices on offer, nothing else. It also
+  // carries the nearest shard and threat so a test can steer the skiff, plus
+  // the stinger / bolt / rush counts the play-tests assert on.
+  window.__game = { screen, score: 0, wave: 1, hull: SKIFF.hull, combo: 0, foesLeft: 0, upgrades: null, difficulty, musicOn: audio.musicOn, sfxOn: audio.sfxOn, best, runs: stats.runs, wins: stats.wins, px: 640, py: 360, shard: null, threat: null, stingers: 0, bolts: 0, rushCharge: 0, rushActive: false };
+  function nearestDebug(list, x, y) {
+    let found = null;
+    let bestD = Infinity;
+    for (const item of list) {
+      if (!item.active) continue;
+      const dx = item.x - x;
+      const dy = item.y - y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; found = item; }
+    }
+    return found;
+  }
   function syncDebug() {
+    const player = world.state.player;
+    const shard = nearestDebug(world.state.shards, player.x, player.y);
+    const threats = [
+      ...world.state.mines, ...world.state.drones, ...world.state.darters,
+      ...world.state.splitters, ...world.state.minis, ...world.state.stingers,
+    ];
+    const threat = nearestDebug(threats, player.x, player.y);
+    const bolt = nearestDebug(world.state.bolts, player.x, player.y);
+    const nearestThreat = [threat, bolt].filter(Boolean).sort((a, b) => {
+      const da = (a.x - player.x) ** 2 + (a.y - player.y) ** 2;
+      const db = (b.x - player.x) ** 2 + (b.y - player.y) ** 2;
+      return da - db;
+    })[0] ?? null;
     window.__game.screen = screen;
     window.__game.score = world.state.score;
     window.__game.wave = world.state.wave;
@@ -141,6 +168,14 @@ function runGame() {
     window.__game.best = best;
     window.__game.runs = stats.runs;
     window.__game.wins = stats.wins;
+    window.__game.px = player.x;
+    window.__game.py = player.y;
+    window.__game.shard = shard ? { x: shard.x, y: shard.y } : null;
+    window.__game.threat = nearestThreat ? { x: nearestThreat.x, y: nearestThreat.y } : null;
+    window.__game.stingers = world.state.stingers.filter((s) => s.active).length;
+    window.__game.bolts = world.state.bolts.filter((b) => b.active).length;
+    window.__game.rushCharge = world.state.rush.charge;
+    window.__game.rushActive = world.state.rush.active > 0;
   }
 
   // Screen readers (and anyone watching the page's text) hear the screen changes and each hit.
@@ -362,6 +397,8 @@ function runGame() {
       }
       if (events & EVENT_SHARD) audio.collect(world.state.combo);
       if (events & EVENT_CELL) audio.cell();
+      if (events & EVENT_RUSH) audio.rush();
+      if (events & EVENT_SHOT) audio.shot();
       if (events & EVENT_WAVE) openUpgrades();
     }
   }

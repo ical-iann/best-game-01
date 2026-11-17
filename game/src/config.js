@@ -6,7 +6,7 @@ export const FIELD = { width: 1280, height: 720 };
 export const STEP = 1 / 60;
 
 // How long a real second of play takes to re-simulate in a screenshot scene.
-export const SHOT_SECONDS = { menu: 6, play: 30, over: 600 };
+export const SHOT_SECONDS = { menu: 6, play: 60, over: 600 };
 
 // The skiff the player flies.
 export const SKIFF = {
@@ -79,6 +79,43 @@ export const MINI = {
 };
 
 // The Void Warden ends wave 5: three pulse hits to kill, and it launches drones.
+// Stingers are long-range shooters: they hold off at ~300 px, telegraph a shot
+// with a charging glow, then fire a slow plasma bolt at where the skiff was.
+// The bolt is dodgeable, the pulse blast destroys bolts, and a stinger is
+// worth more than a drone because it can hit from across the field.
+export const STINGER = {
+  radius: 13,
+  speed: 70,
+  score: 50,
+  chase: 520,
+  holdRange: 300, // it drifts to keep about this far from the skiff
+  fireEvery: 5.0, // seconds between shots, while in range
+  telegraph: 0.7, // seconds of charging glow before the bolt leaves
+  maxBolts: 4, // bolts alive at once, across all stingers
+  holdDecay: 5, // px per second the hold distance shrinks as a stinger ages
+};
+
+export const BOLT = {
+  radius: 7,
+  speed: 150, // slower than the skiff's top speed, so a bolt can be dodged
+  life: 6, // seconds before a bolt fizzles out on its own
+};
+
+// Nova Rush: shard pickups fill the rush meter; a full meter fires 8 seconds
+// of double score and double pulse recharge. It is the run's tempo — a
+// careful pilot triggers it in wave 1 or 2 and rides it through the wave.
+export const RUSH = {
+  need: 8, // shards to fill the meter
+  duration: 8, // seconds of double score once it fires
+};
+
+// Endless depth: past the wave-5 win, every wave pays a little more — the
+// deeper the endless run, the more each point is worth, so staying in the
+// field after the win is a scoring decision, not just a victory lap.
+export const DEPTH = {
+  perWave: 0.05, // +5% score per wave past the win wave
+};
+
 export const BOSS = {
   radius: 42,
   speed: 55,
@@ -104,6 +141,7 @@ export const WAVE = {
   minePerWave: 1,
   darterPerWave: 1, // one per wave from wave 2
   splitterPerWave: 1, // one per wave from wave 3
+  stingerPerWave: 1, // one per wave from wave 3 — the long-range shooter
   spawnGap: 1.4, // seconds between arrivals on wave 1
   spawnGapPerWave: 0.12, // arrivals quicken each wave
   spawnGapMin: 0.7,
@@ -120,19 +158,19 @@ export const DIFFICULTY = {
     id: 'relaxed', label: 'Relaxed', blurb: 'Slower foes · 4 hull',
     speedMul: 0.8, chaseMul: 0.7, droneDelta: -1, mineDelta: -1,
     spawnGapMul: 1.25, hull: 4, energyRechargeMul: 1.25, bossHits: 2,
-    darterDelay: 1, splitterDelay: 1, // darters from wave 3, splitters from wave 4
+    darterDelay: 1, splitterDelay: 1, stingerDelay: 1, // stingers from wave 4
   },
   standard: {
     id: 'standard', label: 'Standard', blurb: 'The intended hunt',
     speedMul: 1, chaseMul: 1, droneDelta: 0, mineDelta: 0,
     spawnGapMul: 1, hull: 3, energyRechargeMul: 1, bossHits: 3,
-    darterDelay: 0, splitterDelay: 0,
+    darterDelay: 0, splitterDelay: 0, stingerDelay: 0,
   },
   expert: {
     id: 'expert', label: 'Expert', blurb: 'Faster foes · more hunters',
     speedMul: 1.25, chaseMul: 1.3, droneDelta: 1, mineDelta: 1,
     spawnGapMul: 0.8, hull: 3, energyRechargeMul: 0.9, bossHits: 4,
-    darterDelay: 0, splitterDelay: 0,
+    darterDelay: 0, splitterDelay: 0, stingerDelay: 0,
   },
 };
 export const DIFFICULTY_IDS = ['relaxed', 'standard', 'expert'];
@@ -157,6 +195,11 @@ export const COLORS = {
   darterCore: '#ffd6fb',
   splitter: '#b78cff',
   splitterCore: '#efe6ff',
+  stinger: '#ff2e88',
+  stingerCore: '#ffc2dd',
+  bolt: '#ff7ad9',
+  boltCore: '#fff0fa',
+  rush: '#ffd166',
   mini: '#ff9f2e',
   boss: '#ff2e63',
   bossCore: '#ffc2d1',

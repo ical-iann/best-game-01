@@ -6,12 +6,12 @@
 // ?seed=N fixes the spawn pattern. ?shot=menu|play|win|over|upgrade (with
 // &seed=N) stages that scene instead of running the loop, paints it twice and
 // sets window.__shotReady for a screenshot.
-import { BEST_KEY, SKIFF, STEP } from './config.js';
+import { BEST_KEY, DIFFICULTY, DIFFICULTY_IDS, SETTINGS_KEY, SKIFF, STATS_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createAudio } from './audio.js';
 import { createWorld, EVENT_BOSS, EVENT_CELL, EVENT_HIT, EVENT_OVER, EVENT_PULSE, EVENT_SHARD, EVENT_SHIELD, EVENT_WAVE, EVENT_WIN } from './world.js';
 import { ACTION_CHOICE_1, ACTION_CHOICE_2, ACTION_CHOICE_3, ACTION_CONFIRM, ACTION_CONTINUE, ACTION_MUTE, ACTION_PAUSE, ACTION_PULSE, ACTION_RESTART, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_UPGRADE, SCREEN_WIN, UPGRADE_CARDS } from './render.js';
+import { createRenderer, DIFFICULTY_BUTTONS, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_UPGRADE, SCREEN_WIN, SETTINGS_BUTTONS, UPGRADE_CARDS } from './render.js';
 import { applyUpgrade, rollUpgrades } from './upgrades.js';
 import { stageShot } from './shots.js';
 
@@ -45,11 +45,62 @@ function saveBest(value) {
   }
 }
 
+// Lifetime run stats: every finished run folds its per-run numbers into these,
+// and the menu and game-over screens show them back.
+function freshStats() {
+  return { runs: 0, wins: 0, bestWave: 0, totalScore: 0, totalShards: 0, totalKills: 0 };
+}
+
+function readStats() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(STATS_KEY) ?? 'null');
+    if (!parsed || typeof parsed !== 'object') return freshStats();
+    const stats = freshStats();
+    for (const key of Object.keys(stats)) {
+      if (Number.isFinite(parsed[key]) && parsed[key] >= 0) stats[key] = Math.floor(parsed[key]);
+    }
+    return stats;
+  } catch {
+    return freshStats();
+  }
+}
+
+function saveStats(stats) {
+  try {
+    window.localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  } catch {
+    // Same as the best score: without storage the stats last this visit only.
+  }
+}
+
+// Remembered settings: the difficulty and the two sound toggles.
+function readSettings() {
+  const settings = { difficulty: 'standard', music: true, sfx: true };
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? 'null');
+    if (!parsed || typeof parsed !== 'object') return settings;
+    if (DIFFICULTY_IDS.includes(parsed.difficulty)) settings.difficulty = parsed.difficulty;
+    if (typeof parsed.music === 'boolean') settings.music = parsed.music;
+    if (typeof parsed.sfx === 'boolean') settings.sfx = parsed.sfx;
+  } catch {
+    // Corrupt settings fall back to the defaults above.
+  }
+  return settings;
+}
+
+function saveSettings(settings) {
+  try {
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Without storage the settings last this visit only.
+  }
+}
+
 function runShot(name) {
   const scene = stageShot(name, world);
   let painted = 0;
   function paint() {
-    renderer.draw(world.state, scene.screen, scene.best, scene.choices ?? null);
+    renderer.draw(world.state, scene.screen, scene.best, scene.choices ?? null, { difficulty: 'standard', stats: null, musicOn: true, sfxOn: true });
     painted += 1;
     if (painted < 2) requestAnimationFrame(paint);
     else window.__shotReady = true;
@@ -63,13 +114,19 @@ function runGame() {
   const upgradeRandom = createRandom((seed ^ 0x9e3779b9) >>> 0);
   let screen = SCREEN_TITLE;
   let best = readBest();
+  let stats = readStats();
+  let settings = readSettings();
+  let difficulty = settings.difficulty;
+  world.setDifficulty(difficulty);
+  audio.setMusicMuted(!settings.music);
+  audio.setSfxMuted(!settings.sfx);
   let choices = null;
   let accumulator = 0;
   let last = performance.now();
 
   // The debug handle the play-tests read: the live screen and score, the foes
   // still to clear, and the upgrade choices on offer, nothing else.
-  window.__game = { screen, score: 0, wave: 1, hull: SKIFF.hull, combo: 0, foesLeft: 0, upgrades: null };
+  window.__game = { screen, score: 0, wave: 1, hull: SKIFF.hull, combo: 0, foesLeft: 0, upgrades: null, difficulty, musicOn: audio.musicOn, sfxOn: audio.sfxOn, best, runs: stats.runs, wins: stats.wins };
   function syncDebug() {
     window.__game.screen = screen;
     window.__game.score = world.state.score;
@@ -78,6 +135,12 @@ function runGame() {
     window.__game.combo = world.state.combo;
     window.__game.foesLeft = world.state.foesLeft;
     window.__game.upgrades = choices ? choices.map((choice) => choice.id) : null;
+    window.__game.difficulty = difficulty;
+    window.__game.musicOn = audio.musicOn;
+    window.__game.sfxOn = audio.sfxOn;
+    window.__game.best = best;
+    window.__game.runs = stats.runs;
+    window.__game.wins = stats.wins;
   }
 
   // Screen readers (and anyone watching the page's text) hear the screen changes and each hit.
@@ -85,13 +148,53 @@ function runGame() {
     status.textContent = message;
   }
 
+  function drawExtra() {
+    return { difficulty, stats, musicOn: audio.musicOn, sfxOn: audio.sfxOn };
+  }
+
+  function selectDifficulty(id) {
+    if (!DIFFICULTY_IDS.includes(id)) return;
+    difficulty = id;
+    settings.difficulty = id;
+    saveSettings(settings);
+    world.setDifficulty(id);
+    announce(`Difficulty: ${DIFFICULTY[id].label}. ${DIFFICULTY[id].blurb}. Press Space to start.`);
+    syncDebug();
+  }
+
+  function toggleSetting(id) {
+    if (id === 'music') {
+      audio.toggleMusic();
+      settings.music = !audio.musicMuted;
+    } else if (id === 'sfx') {
+      audio.toggleSfx();
+      settings.sfx = !audio.sfxMuted;
+    } else {
+      return;
+    }
+    saveSettings(settings);
+    announce(id === 'music' ? (settings.music ? 'Music on.' : 'Music off.') : (settings.sfx ? 'Sound effects on.' : 'Sound effects off.'));
+    syncDebug();
+  }
+
+  function recordRun(won) {
+    stats.runs += 1;
+    if (won) stats.wins += 1;
+    stats.bestWave = Math.max(stats.bestWave, world.state.wave);
+    stats.totalScore += world.state.score;
+    stats.totalShards += world.state.stats.shards;
+    stats.totalKills += world.state.stats.kills;
+    saveStats(stats);
+  }
+
   function startGame() {
     audio.unlock();
+    world.setDifficulty(difficulty);
     world.reset();
     accumulator = 0;
     choices = null;
     screen = SCREEN_PLAY;
-    announce(`Playing. ${SKIFF.hull} hull. Collect shards, dodge mines, clear 5 waves.`);
+    announce(`Playing on ${DIFFICULTY[difficulty].label}. ${world.state.player.maxHull} hull. Collect shards, dodge mines, clear 5 waves.`);
     syncDebug();
   }
 
@@ -101,6 +204,7 @@ function runGame() {
       best = world.state.score;
       saveBest(best);
     }
+    recordRun(false);
     audio.over();
     announce(`Game over. Score ${world.state.score}. Best ${best}.`);
     syncDebug();
@@ -112,6 +216,7 @@ function runGame() {
       best = world.state.score;
       saveBest(best);
     }
+    recordRun(true);
     audio.win();
     announce(`Field harvested. Score ${world.state.score}. Best ${best}.`);
     syncDebug();
@@ -142,6 +247,7 @@ function runGame() {
     if (actions & ACTION_MUTE) {
       const muted = audio.toggleMute();
       announce(muted ? 'Muted.' : 'Sound on.');
+      syncDebug();
     }
     if (screen === SCREEN_UPGRADE) {
       if (actions & ACTION_CHOICE_1) { pickUpgrade(0); return; }
@@ -156,8 +262,29 @@ function runGame() {
       }
       return;
     }
-    if (screen === SCREEN_TITLE && (actions & ACTION_CONFIRM)) {
-      startGame();
+    if (screen === SCREEN_TITLE) {
+      // Clicks on the difficulty buttons or the music / SFX pills change a
+      // setting instead of starting the run (a click also raises CONFIRM,
+      // so these must be checked before the start below).
+      if (pointer) {
+        const diffHit = DIFFICULTY_BUTTONS.findIndex((button) => (
+          pointer.x >= button.x && pointer.x <= button.x + button.w
+          && pointer.y >= button.y && pointer.y <= button.y + button.h
+        ));
+        if (diffHit >= 0) { selectDifficulty(DIFFICULTY_IDS[diffHit]); return; }
+        const setHit = SETTINGS_BUTTONS.findIndex((button) => (
+          pointer.x >= button.x && pointer.x <= button.x + button.w
+          && pointer.y >= button.y && pointer.y <= button.y + button.h
+        ));
+        if (setHit >= 0) { toggleSetting(SETTINGS_BUTTONS[setHit].id); return; }
+      }
+      if (actions & ACTION_CHOICE_1) { selectDifficulty('relaxed'); return; }
+      if (actions & ACTION_CHOICE_2) { selectDifficulty('standard'); return; }
+      if (actions & ACTION_CHOICE_3) { selectDifficulty('expert'); return; }
+      if (actions & ACTION_CONFIRM) {
+        startGame();
+        return;
+      }
       return;
     }
     if (screen === SCREEN_OVER && (actions & (ACTION_CONFIRM | ACTION_RESTART))) {
@@ -177,15 +304,30 @@ function runGame() {
         return;
       }
     }
+    if (screen === SCREEN_PAUSED) {
+      // The music / SFX pills work here too; any other click resumes.
+      if (pointer) {
+        const setHit = SETTINGS_BUTTONS.findIndex((button) => (
+          pointer.x >= button.x && pointer.x <= button.x + button.w
+          && pointer.y >= button.y && pointer.y <= button.y + button.h
+        ));
+        if (setHit >= 0) { toggleSetting(SETTINGS_BUTTONS[setHit].id); return; }
+      }
+      if (actions & ACTION_RESTART) {
+        startGame();
+        return;
+      }
+      if (actions & (ACTION_PAUSE | ACTION_CONFIRM)) {
+        screen = SCREEN_PLAY;
+        announce('Playing.');
+        syncDebug();
+        return;
+      }
+      return;
+    }
     if (screen === SCREEN_PLAY && (actions & ACTION_PAUSE)) {
       screen = SCREEN_PAUSED;
       announce('Paused.');
-      syncDebug();
-      return;
-    }
-    if (screen === SCREEN_PAUSED && (actions & (ACTION_PAUSE | ACTION_CONFIRM))) {
-      screen = SCREEN_PLAY;
-      announce('Playing.');
       syncDebug();
       return;
     }
@@ -237,7 +379,7 @@ function runGame() {
     } else {
       accumulator = 0;
     }
-    renderer.draw(world.state, screen, best, choices);
+    renderer.draw(world.state, screen, best, choices, drawExtra());
     syncDebug();
   }
 

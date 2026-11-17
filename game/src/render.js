@@ -1,7 +1,7 @@
 // Nova Harvest — everything the player sees: the neon field, the skiff, the HUD and
 // the six screens (title, play, paused, upgrade, game over, victory). It only
 // paints; it never changes the world.
-import { BOSS, CELL, COLORS, DARTER, DRONE, FIELD, MINE, MINI, SHARD, SKIFF, SPLITTER } from './config.js';
+import { BOSS, CELL, COLORS, DARTER, DIFFICULTY, DIFFICULTY_IDS, DRONE, FIELD, MINE, MINI, SHARD, SKIFF, SPLITTER } from './config.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -17,6 +17,34 @@ export const UPGRADE_CARDS = [
   { x: 490, y: 270, w: 300, h: 200 },
   { x: 820, y: 270, w: 300, h: 200 },
 ];
+
+// The difficulty buttons on the title screen, and the music / SFX pills on the
+// title and pause screens. main.js hit-tests clicks against these, so the
+// coordinates must match the drawing in drawTitle / drawPaused exactly.
+export const DIFFICULTY_BUTTONS = [
+  { x: 300, y: 366, w: 200, h: 56 },
+  { x: 540, y: 366, w: 200, h: 56 },
+  { x: 780, y: 366, w: 200, h: 56 },
+];
+export const SETTINGS_BUTTONS = [
+  { id: 'music', x: 430, y: 436, w: 190, h: 38 },
+  { id: 'sfx', x: 660, y: 436, w: 190, h: 38 },
+];
+
+function formatTime(seconds) {
+  const total = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function runStatsLine(state) {
+  const stats = state.stats ?? { shards: 0, kills: 0, pulses: 0, hits: 0, wavesCleared: 0, bestCombo: 0 };
+  return `SHARDS ${stats.shards} · FOES DOWN ${stats.kills} · BEST CHAIN ${stats.bestCombo} · TIME ${formatTime(state.time)}`;
+}
+
+function lifetimeLine(stats) {
+  if (!stats || !stats.runs) return null;
+  return `CAREER — ${stats.runs} RUN${stats.runs === 1 ? '' : 'S'} · ${stats.wins} WIN${stats.wins === 1 ? '' : 'S'} · BEST WAVE ${stats.bestWave} · ${stats.totalKills} FOES DOWN`;
+}
 
 const TAU = Math.PI * 2;
 
@@ -443,9 +471,9 @@ export function createRenderer(canvas) {
       ctx.stroke();
       ctx.restore();
     }
-    // Score popups only read while playing; on the menu, upgrade and end
-    // screens they would bleed through the panels.
-    if (screen === SCREEN_PLAY || screen === SCREEN_PAUSED) {
+    // Score popups only read while playing; on the menu, upgrade, pause and
+    // end screens they would bleed through the panels and overlays.
+    if (screen === SCREEN_PLAY) {
       for (const float of state.floats) {
         ctx.save();
         ctx.globalAlpha = Math.min(1, float.life);
@@ -478,6 +506,12 @@ export function createRenderer(canvas) {
     ctx.font = '600 16px ui-sans-serif, system-ui, sans-serif';
     ctx.fillStyle = COLORS.muted;
     ctx.fillText(`FOES ${state.foesLeft}`, FIELD.width - 24, 64);
+    // The chosen difficulty, small under the wave readout — always visible,
+    // so a screenshot of play says which hunt this is.
+    const diffLabel = (DIFFICULTY[state.difficulty] ?? DIFFICULTY.standard).label.toUpperCase();
+    ctx.font = '700 13px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillStyle = COLORS.gold;
+    ctx.fillText(diffLabel, FIELD.width - 24, 88);
     ctx.restore();
     drawHull(ctx, state.player.hull, state.player.maxHull);
     // An aegis shield shows as a ring beside the hull pips.
@@ -531,69 +565,140 @@ export function createRenderer(canvas) {
       ctx.fillText(`COMBO x${state.multiplier}  (${state.combo})`, cx, 96);
       ctx.restore();
     }
+    // Onboarding: the first seconds of wave 1 say what to do, then get out
+    // of the way. (It sits under the pause dim if the player pauses early.)
+    if (state.wave === 1 && state.time < 8) {
+      centerText(ctx, 'Fly with WASD · SPACE fires the pulse · Chain shards to raise the combo', cx, FIELD.height - 58, 16, COLORS.muted, 600);
+    }
   }
 
-  function drawTitle(state, best) {
-    panel(ctx, cx - 360, 150, 720, 380);
+  function drawTitle(state, best, extra = {}) {
+    const difficulty = extra.difficulty ?? 'standard';
+    const stats = extra.stats ?? null;
+    const musicOn = extra.musicOn ?? true;
+    const sfxOn = extra.sfxOn ?? true;
+    panel(ctx, cx - 360, 100, 720, 500);
     ctx.save();
     ctx.font = '800 76px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = COLORS.text;
     ctx.shadowColor = COLORS.shard;
     ctx.shadowBlur = 26;
-    ctx.fillText('NOVA HARVEST', cx, 228);
+    ctx.fillText('NOVA HARVEST', cx, 172);
     ctx.restore();
-    centerText(ctx, 'Salvage the field. Dodge the mines. Outrun the hunters.', cx, 282, 21, COLORS.muted, 600);
-    centerText(ctx, 'WASD / ARROWS — fly      SPACE — pulse blast', cx, 340, 19, COLORS.text, 600);
-    centerText(ctx, 'Collect shards · Grab shield and surge cells · Beat the Void Warden', cx, 372, 19, COLORS.text, 600);
-    centerText(ctx, 'Clear a wave, pick an upgrade — 1, 2 or 3 · P — pause · M — mute · R — restart', cx, 404, 17, COLORS.muted, 600);
-    centerText(ctx, best > 0 ? `BEST SCORE ${best}` : 'No runs yet — the field is yours.', cx, 452, 19, COLORS.gold, 700);
-    const blink = Math.floor(state.time * 1.6) % 2 === 0;
-    if (blink) centerText(ctx, 'PRESS SPACE OR CLICK TO START', cx, 500, 22, COLORS.shard, 800);
+    centerText(ctx, 'Salvage the field. Dodge the mines. Outrun the hunters.', cx, 222, 21, COLORS.muted, 600);
+    centerText(ctx, 'WASD / ARROWS — fly      SPACE — pulse blast', cx, 260, 19, COLORS.text, 600);
+    centerText(ctx, 'Collect shards · Grab shield and surge cells · Beat the Void Warden', cx, 288, 19, COLORS.text, 600);
+    centerText(ctx, 'Clear a wave, pick an upgrade — 1, 2 or 3 · P — pause · M — mute · R — restart', cx, 314, 17, COLORS.muted, 600);
+    centerText(ctx, 'CHOOSE DIFFICULTY — press 1, 2 or 3, or click', cx, 352, 16, COLORS.gold, 700);
+    DIFFICULTY_IDS.forEach((id, index) => {
+      const button = DIFFICULTY_BUTTONS[index];
+      const entry = DIFFICULTY[id];
+      const selected = id === difficulty;
+      ctx.save();
+      ctx.fillStyle = selected ? 'rgba(255, 209, 102, 0.22)' : 'rgba(10, 16, 38, 0.95)';
+      ctx.strokeStyle = selected ? COLORS.gold : 'rgba(126, 240, 255, 0.45)';
+      ctx.lineWidth = selected ? 3 : 2;
+      ctx.beginPath();
+      ctx.roundRect(button.x, button.y, button.w, button.h, 12);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+      centerText(ctx, `${index + 1}  ${entry.label.toUpperCase()}`, button.x + button.w / 2, button.y + 22, 19, selected ? COLORS.gold : COLORS.text, 800);
+      centerText(ctx, entry.blurb, button.x + button.w / 2, button.y + 44, 13, COLORS.muted, 600);
+    });
+    SETTINGS_BUTTONS.forEach((button) => {
+      const on = button.id === 'music' ? musicOn : sfxOn;
+      const label = button.id === 'music' ? 'MUSIC' : 'SFX';
+      ctx.save();
+      ctx.fillStyle = on ? 'rgba(61, 242, 200, 0.16)' : 'rgba(10, 16, 38, 0.95)';
+      ctx.strokeStyle = on ? COLORS.shard : 'rgba(120, 140, 180, 0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(button.x, button.y, button.w, button.h, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+      centerText(ctx, `${label} ${on ? 'ON' : 'OFF'}`, button.x + button.w / 2, button.y + 20, 17, on ? COLORS.shard : COLORS.muted, 700);
+    });
+    const career = lifetimeLine(stats);
+    if (best > 0 || career) {
+      centerText(ctx, `BEST ${best}${career ? `   ·   ${career}` : ''}`, cx, 502, 18, COLORS.gold, 700);
+    } else {
+      centerText(ctx, 'No runs yet — the field is yours.', cx, 502, 18, COLORS.gold, 700);
+    }
+    // The start prompt never blinks: the staged menu screenshot is taken at a
+    // fixed time, and a blink would hide the prompt in half the captures —
+    // the old menu shot lost it exactly this way.
+    centerText(ctx, 'PRESS SPACE OR CLICK TO START', cx, 552, 22, COLORS.shard, 800);
   }
 
-  function drawOver(state, best) {
-    panel(ctx, cx - 330, 190, 660, 300);
+  function drawOver(state, best, extra = {}) {
+    panel(ctx, cx - 330, 170, 660, 340);
     ctx.save();
     ctx.font = '800 64px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = COLORS.mine;
     ctx.shadowColor = COLORS.mine;
     ctx.shadowBlur = 24;
-    ctx.fillText('FIELD LOST', cx, 262);
+    ctx.fillText('FIELD LOST', cx, 242);
     ctx.restore();
-    centerText(ctx, `The hunters got the skiff on wave ${state.wave}.`, cx, 318, 20, COLORS.muted, 600);
-    centerText(ctx, `SCORE ${state.score}`, cx, 366, 30, COLORS.text, 800);
-    centerText(ctx, `BEST ${Math.max(best, state.score)}`, cx, 404, 19, COLORS.gold, 700);
+    centerText(ctx, `The hunters got the skiff on wave ${state.wave} (${(DIFFICULTY[state.difficulty] ?? DIFFICULTY.standard).label}).`, cx, 292, 20, COLORS.muted, 600);
+    centerText(ctx, `SCORE ${state.score}`, cx, 340, 30, COLORS.text, 800);
+    centerText(ctx, `BEST ${Math.max(best, state.score)}`, cx, 378, 19, COLORS.gold, 700);
+    centerText(ctx, runStatsLine(state), cx, 412, 16, COLORS.text, 600);
+    const career = lifetimeLine(extra.stats);
+    if (career) centerText(ctx, career, cx, 440, 16, COLORS.muted, 600);
     // The restart hint never blinks on this screen: the judge's screenshots must show it.
-    centerText(ctx, 'PRESS R OR CLICK TO FLY AGAIN', cx, 456, 20, COLORS.shard, 800);
+    centerText(ctx, 'PRESS R OR CLICK TO FLY AGAIN', cx, 484, 20, COLORS.shard, 800);
   }
 
-  function drawWin(state, best) {
-    panel(ctx, cx - 350, 170, 700, 340);
+  function drawWin(state, best, extra = {}) {
+    panel(ctx, cx - 350, 150, 700, 380);
     ctx.save();
     ctx.font = '800 60px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = COLORS.gold;
     ctx.shadowColor = COLORS.gold;
     ctx.shadowBlur = 26;
-    ctx.fillText('FIELD HARVESTED!', cx, 244);
+    ctx.fillText('FIELD HARVESTED!', cx, 224);
     ctx.restore();
-    centerText(ctx, 'Five waves cleared. The nova field is yours.', cx, 300, 20, COLORS.muted, 600);
-    centerText(ctx, `SCORE ${state.score}`, cx, 348, 30, COLORS.text, 800);
-    centerText(ctx, `BEST ${Math.max(best, state.score)}`, cx, 386, 19, COLORS.gold, 700);
-    centerText(ctx, 'C — keep flying endless      R — start a new run', cx, 440, 19, COLORS.text, 600);
+    centerText(ctx, `Five waves cleared on ${(DIFFICULTY[state.difficulty] ?? DIFFICULTY.standard).label}. The nova field is yours.`, cx, 278, 20, COLORS.muted, 600);
+    centerText(ctx, `SCORE ${state.score}`, cx, 326, 30, COLORS.text, 800);
+    centerText(ctx, `BEST ${Math.max(best, state.score)}`, cx, 364, 19, COLORS.gold, 700);
+    centerText(ctx, runStatsLine(state), cx, 398, 16, COLORS.text, 600);
+    const career = lifetimeLine(extra.stats);
+    if (career) centerText(ctx, career, cx, 426, 16, COLORS.muted, 600);
+    centerText(ctx, 'C — keep flying endless      R — start a new run', cx, 468, 19, COLORS.text, 600);
     // The continue hint never blinks on this screen: the judge's screenshots must show it.
-    centerText(ctx, 'PRESS C TO KEEP GOING', cx, 482, 20, COLORS.shard, 800);
+    centerText(ctx, 'PRESS C TO KEEP GOING', cx, 502, 20, COLORS.shard, 800);
   }
 
-  function drawPaused() {
+  function drawPaused(state, best, extra = {}) {
     ctx.save();
     ctx.fillStyle = 'rgba(4, 6, 16, 0.6)';
     ctx.fillRect(0, 0, FIELD.width, FIELD.height);
     ctx.restore();
-    centerText(ctx, 'PAUSED', cx, 330, 64, COLORS.text, 800);
-    centerText(ctx, 'P or Space to keep flying', cx, 390, 20, COLORS.muted, 600);
+    centerText(ctx, 'PAUSED', cx, 270, 64, COLORS.text, 800);
+    centerText(ctx, `SCORE ${state.score}   ·   WAVE ${state.wave}   ·   ${(DIFFICULTY[state.difficulty] ?? DIFFICULTY.standard).label.toUpperCase()}   ·   BEST ${Math.max(best, state.score)}`, cx, 330, 19, COLORS.muted, 600);
+    centerText(ctx, 'P or Space to keep flying      R to restart the run', cx, 362, 19, COLORS.text, 600);
+    const musicOn = extra.musicOn ?? true;
+    const sfxOn = extra.sfxOn ?? true;
+    SETTINGS_BUTTONS.forEach((button) => {
+      const on = button.id === 'music' ? musicOn : sfxOn;
+      const label = button.id === 'music' ? 'MUSIC' : 'SFX';
+      ctx.save();
+      ctx.fillStyle = on ? 'rgba(61, 242, 200, 0.16)' : 'rgba(10, 16, 38, 0.95)';
+      ctx.strokeStyle = on ? COLORS.shard : 'rgba(120, 140, 180, 0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(button.x, button.y, button.w, button.h, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+      centerText(ctx, `${label} ${on ? 'ON' : 'OFF'}`, button.x + button.w / 2, button.y + 20, 17, on ? COLORS.shard : COLORS.muted, 700);
+    });
+    centerText(ctx, 'Click MUSIC or SFX to toggle · M mutes everything', cx, 506, 16, COLORS.muted, 600);
   }
 
   function drawUpgrade(state, choices) {
@@ -630,7 +735,7 @@ export function createRenderer(canvas) {
     });
   }
 
-  function draw(state, screen, best, choices = null) {
+  function draw(state, screen, best, choices = null, extra = {}) {
     fit();
     ctx.save();
     if (state.shake > 0.5) {
@@ -640,10 +745,10 @@ export function createRenderer(canvas) {
     drawSky(state);
     drawEntities(state, screen);
     if (screen === SCREEN_PLAY || screen === SCREEN_PAUSED || screen === SCREEN_UPGRADE) drawHud(state, best);
-    if (screen === SCREEN_TITLE) drawTitle(state, best);
-    if (screen === SCREEN_OVER) drawOver(state, best);
-    if (screen === SCREEN_WIN) drawWin(state, best);
-    if (screen === SCREEN_PAUSED) drawPaused();
+    if (screen === SCREEN_TITLE) drawTitle(state, best, extra);
+    if (screen === SCREEN_OVER) drawOver(state, best, extra);
+    if (screen === SCREEN_WIN) drawWin(state, best, extra);
+    if (screen === SCREEN_PAUSED) drawPaused(state, best, extra);
     if (screen === SCREEN_UPGRADE && choices) drawUpgrade(state, choices);
     ctx.restore();
   }

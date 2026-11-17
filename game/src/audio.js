@@ -1,10 +1,13 @@
 // Nova Harvest — every sound is synthesized with WebAudio; no audio files exist.
 // The context starts on the first user gesture (a browser rule), so all calls before
-// that are silent no-ops. A mute toggle (M) is read by the caller through `muted`.
+// that are silent no-ops. Mute has three layers: a master mute (M) plus separate
+// music and SFX toggles, each remembered by the caller in localStorage.
 export function createAudio() {
   let context = null;
   let master = null;
-  let muted = false;
+  let muted = false; // master: M key, silences everything
+  let musicMuted = false;
+  let sfxMuted = false;
   let musicTimer = null;
   let musicStep = 0;
   let musicNext = 0;
@@ -12,6 +15,11 @@ export function createAudio() {
   // A slow A-minor bass walk, one note a beat at 100 bpm, quiet under the play.
   const BASS = [110.0, 87.31, 130.81, 98.0, 110.0, 87.31, 146.83, 98.0];
   const BEAT = 60 / 100;
+  // A sparse A-minor pentatonic pluck over the bass: one quiet sine note on
+  // some beats, silence on the rest, so the loop gains a tune without ever
+  // getting busy. -1 is a rest; the pattern repeats every 16 beats.
+  const MELODY = [440.0, 523.25, 587.33, 659.25, 783.99, 880.0];
+  const MELODY_PATTERN = [0, -1, 2, -1, 4, 3, 2, -1, 0, -1, 4, -1, 3, 2, 1, -1];
 
   function ensure() {
     if (context) return true;
@@ -33,7 +41,7 @@ export function createAudio() {
     musicStep = 0;
     musicNext = context.currentTime + 0.1;
     musicTimer = setInterval(() => {
-      if (muted || context.state === 'suspended') {
+      if (muted || musicMuted || context.state === 'suspended') {
         musicNext = Math.max(musicNext, context.currentTime + 0.1);
         return;
       }
@@ -63,6 +71,21 @@ export function createAudio() {
           fifth.start(musicNext);
           fifth.stop(musicNext + BEAT);
         }
+        // The melody pluck: a single soft sine note, half as loud as the bass.
+        const note = MELODY_PATTERN[musicStep % MELODY_PATTERN.length];
+        if (note >= 0) {
+          const pluck = context.createOscillator();
+          const pluckAmp = context.createGain();
+          pluck.type = 'sine';
+          pluck.frequency.setValueAtTime(MELODY[note], musicNext);
+          pluckAmp.gain.setValueAtTime(0.0001, musicNext);
+          pluckAmp.gain.exponentialRampToValueAtTime(0.055, musicNext + 0.04);
+          pluckAmp.gain.exponentialRampToValueAtTime(0.0001, musicNext + BEAT * 0.9);
+          pluck.connect(pluckAmp);
+          pluckAmp.connect(master);
+          pluck.start(musicNext);
+          pluck.stop(musicNext + BEAT);
+        }
         musicNext += BEAT;
         musicStep += 1;
       }
@@ -77,7 +100,7 @@ export function createAudio() {
   }
 
   function tone(freq, dur, type, gain, slideTo) {
-    if (muted || !ensure() || context.state === 'suspended') return;
+    if (muted || sfxMuted || !ensure() || context.state === 'suspended') return;
     try {
       const osc = context.createOscillator();
       const amp = context.createGain();
@@ -99,9 +122,38 @@ export function createAudio() {
     get muted() {
       return muted;
     },
+    get musicMuted() {
+      return musicMuted;
+    },
+    get sfxMuted() {
+      return sfxMuted;
+    },
+    /** Effective audibility: the master mute silences both layers. */
+    get musicOn() {
+      return !muted && !musicMuted;
+    },
+    get sfxOn() {
+      return !muted && !sfxMuted;
+    },
     toggleMute() {
       muted = !muted;
       return muted;
+    },
+    toggleMusic() {
+      musicMuted = !musicMuted;
+      return musicMuted;
+    },
+    toggleSfx() {
+      sfxMuted = !sfxMuted;
+      return sfxMuted;
+    },
+    setMusicMuted(value) {
+      musicMuted = !!value;
+      return musicMuted;
+    },
+    setSfxMuted(value) {
+      sfxMuted = !!value;
+      return sfxMuted;
     },
     unlock() {
       ensure();

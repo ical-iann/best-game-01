@@ -3,7 +3,7 @@
 // The world advances in fixed steps and nothing here touches the screen or the
 // sound; it reports what happened as event bits so the caller can announce and
 // play them.
-import { BOSS, CELL, COLORS, DARTER, DRONE, FIELD, MINE, MINI, SHARD, SKIFF, SPLITTER, WAVE } from './config.js';
+import { BOSS, CELL, COLORS, DARTER, DIFFICULTY, DRONE, FIELD, MINE, MINI, SHARD, SKIFF, SPLITTER, WAVE } from './config.js';
 
 export const EVENT_HIT = 1;
 export const EVENT_OVER = 2;
@@ -32,11 +32,15 @@ function farFromPlayer(random, player, minDist) {
   return { x: random.range(50, FIELD.width - 50), y: random.range(70, FIELD.height - 50) };
 }
 
-export function createWorld(random) {
+export function createWorld(random, difficultyId = 'standard') {
+  let difficulty = DIFFICULTY[difficultyId] ?? DIFFICULTY.standard;
+  const freshStats = () => ({ shards: 0, kills: 0, pulses: 0, hits: 0, wavesCleared: 0, bestCombo: 0 });
   const state = {
     time: 0,
     score: 0,
     wave: 1,
+    difficulty: difficulty.id,
+    stats: freshStats(),
     combo: 0,
     comboTimer: 0,
     multiplier: 1,
@@ -166,7 +170,7 @@ export function createWorld(random) {
   function spawnBoss() {
     const spot = edgePoint();
     state.boss = {
-      x: spot.x, y: spot.y, vx: 0, vy: 0, hp: BOSS.hits, maxHp: BOSS.hits,
+      x: spot.x, y: spot.y, vx: 0, vy: 0, hp: difficulty.bossHits, maxHp: difficulty.bossHits,
       phase: random.next() * TAU, spawnTimer: 3, active: true,
     };
   }
@@ -184,10 +188,12 @@ export function createWorld(random) {
   }
 
   function startWave(wave) {
-    const mines = WAVE.mineBase + WAVE.minePerWave * (wave - 1);
-    const drones = WAVE.droneBase + WAVE.dronePerWave * (wave - 1);
-    const darters = wave >= 2 ? WAVE.darterPerWave * (wave - 1) : 0;
-    const splitters = wave >= 3 ? WAVE.splitterPerWave * (wave - 2) : 0;
+    const mines = Math.max(1, WAVE.mineBase + WAVE.minePerWave * (wave - 1) + difficulty.mineDelta);
+    const drones = Math.max(2, WAVE.droneBase + WAVE.dronePerWave * (wave - 1) + difficulty.droneDelta);
+    const darterWave = 2 + difficulty.darterDelay;
+    const splitterWave = 3 + difficulty.splitterDelay;
+    const darters = wave >= darterWave ? WAVE.darterPerWave * (wave - darterWave + 1) : 0;
+    const splitters = wave >= splitterWave ? WAVE.splitterPerWave * (wave - splitterWave + 1) : 0;
     const bossWave = wave % WAVE.winWave === 0;
     for (let index = 0; index < mines; index += 1) spawnMine();
     spawnQueue = [];
@@ -245,6 +251,8 @@ export function createWorld(random) {
     state.time = 0;
     state.score = 0;
     state.wave = 1;
+    state.difficulty = difficulty.id;
+    state.stats = freshStats();
     state.combo = 0;
     state.comboTimer = 0;
     state.multiplier = 1;
@@ -252,10 +260,10 @@ export function createWorld(random) {
     state.shake = 0;
     state.player = {
       x: FIELD.width / 2, y: FIELD.height / 2, vx: 0, vy: 0, angle: -Math.PI / 2,
-      hull: SKIFF.hull, maxHull: SKIFF.hull, invuln: 0, shield: false,
+      hull: difficulty.hull, maxHull: difficulty.hull, invuln: 0, shield: false,
       energy: SKIFF.energyMax, pulseAge: 9,
       pulseRadius: SKIFF.pulseRadius, pulseCost: SKIFF.pulseCost,
-      energyRecharge: SKIFF.energyRecharge, thrustMul: 1, maxSpeed: SKIFF.maxSpeed,
+      energyRecharge: SKIFF.energyRecharge * difficulty.energyRechargeMul, thrustMul: 1, maxSpeed: SKIFF.maxSpeed,
       magnet: 0,
     };
     state.shards = [];
@@ -285,6 +293,7 @@ export function createWorld(random) {
     if (player.energy < player.pulseCost) return false;
     player.energy -= player.pulseCost;
     player.pulseAge = 0;
+    state.stats.pulses += 1;
     let kills = 0;
     let events = 0;
     const radius = player.pulseRadius;
@@ -301,6 +310,7 @@ export function createWorld(random) {
         if (dist2(foe.x, foe.y, player.x, player.y) < (radius + kindRadius) ** 2) {
           foe.active = false;
           kills += 1;
+          state.stats.kills += 1;
           state.score += score;
           state.foesLeft -= 1;
           burst(foe.x, foe.y, color, 12, 150);
@@ -326,6 +336,7 @@ export function createWorld(random) {
         boss.active = false;
         state.boss = null;
         state.score += BOSS.score;
+        state.stats.kills += 1;
         state.foesLeft -= 1;
         burst(boss.x, boss.y, COLORS.boss, 40, 280);
         burst(boss.x, boss.y, COLORS.gold, 24, 220);
@@ -354,6 +365,7 @@ export function createWorld(random) {
     }
     player.hull -= 1;
     player.invuln = SKIFF.invulnerableSeconds;
+    state.stats.hits += 1;
     state.shake = 10;
     state.combo = 0;
     state.comboTimer = 0;
@@ -479,6 +491,8 @@ export function createWorld(random) {
       if (!attract && dist2(shard.x, shard.y, player.x, player.y) < (SHARD.radius + SKIFF.radius) ** 2) {
         shard.active = false;
         state.combo += 1;
+        state.stats.shards += 1;
+        state.stats.bestCombo = Math.max(state.stats.bestCombo, state.combo);
         state.comboTimer = SHARD.comboWindow;
         state.multiplier = Math.min(SHARD.comboMax, 1 + Math.floor(state.combo / SHARD.comboStep));
         const gained = SHARD.score * state.multiplier;
@@ -530,13 +544,16 @@ export function createWorld(random) {
     state.mines = state.mines.filter((mine) => mine.active);
 
     // The hunters: drones chase, darters weave in fast, splitters lumber, minis swarm.
-    // Each kind hunts harder the deeper the run goes.
+    // Each kind hunts harder the deeper the run goes — and faster on Expert,
+    // slower on Relaxed (speedMul / chaseMul from the chosen difficulty).
     const wv = state.wave - 1;
+    const speedMul = difficulty.speedMul;
+    const chaseMul = difficulty.chaseMul;
     for (const drone of state.drones) {
       if (!drone.active) continue;
       drone.phase += dt * 2;
       if (drone.grace > 0) drone.grace -= dt;
-      chase(drone, DRONE.speed + DRONE.speedPerWave * wv, Math.min(700, DRONE.chase + DRONE.chasePerWave * wv), dt, attract || drone.grace > 0);
+      chase(drone, (DRONE.speed + DRONE.speedPerWave * wv) * speedMul, Math.min(700, (DRONE.chase + DRONE.chasePerWave * wv) * chaseMul), dt, attract || drone.grace > 0);
       if (!attract && player.invuln <= 0 && drone.grace <= 0) events |= touchFoe(drone, DRONE.radius, dt);
     }
     state.drones = state.drones.filter((drone) => drone.active);
@@ -544,7 +561,7 @@ export function createWorld(random) {
       if (!darter.active) continue;
       darter.phase += dt * 2;
       if (darter.grace > 0) darter.grace -= dt;
-      chase(darter, DARTER.speed + DARTER.speedPerWave * wv, Math.min(700, DARTER.chase + DARTER.chasePerWave * wv), dt, attract || darter.grace > 0, 1);
+      chase(darter, (DARTER.speed + DARTER.speedPerWave * wv) * speedMul, Math.min(700, (DARTER.chase + DARTER.chasePerWave * wv) * chaseMul), dt, attract || darter.grace > 0, 1);
       if (!attract && player.invuln <= 0 && darter.grace <= 0) events |= touchFoe(darter, DARTER.radius, dt);
     }
     state.darters = state.darters.filter((darter) => darter.active);
@@ -552,7 +569,7 @@ export function createWorld(random) {
       if (!splitter.active) continue;
       splitter.phase += dt * 2;
       if (splitter.grace > 0) splitter.grace -= dt;
-      chase(splitter, SPLITTER.speed, SPLITTER.chase, dt, attract || splitter.grace > 0);
+      chase(splitter, SPLITTER.speed * speedMul, SPLITTER.chase * chaseMul, dt, attract || splitter.grace > 0);
       if (!attract && player.invuln <= 0 && splitter.grace <= 0) events |= touchFoe(splitter, SPLITTER.radius, dt);
     }
     state.splitters = state.splitters.filter((splitter) => splitter.active);
@@ -560,7 +577,7 @@ export function createWorld(random) {
       if (!mini.active) continue;
       mini.phase += dt * 2;
       if (mini.grace > 0) mini.grace -= dt;
-      chase(mini, MINI.speed + MINI.speedPerWave * wv, Math.min(700, MINI.chase + MINI.chasePerWave * wv), dt, attract || mini.grace > 0);
+      chase(mini, (MINI.speed + MINI.speedPerWave * wv) * speedMul, Math.min(700, (MINI.chase + MINI.chasePerWave * wv) * chaseMul), dt, attract || mini.grace > 0);
       if (!attract && player.invuln <= 0 && mini.grace <= 0) events |= touchFoe(mini, MINI.radius, dt);
     }
     state.minis = state.minis.filter((mini) => mini.active);
@@ -569,7 +586,7 @@ export function createWorld(random) {
     const boss = state.boss;
     if (boss && boss.active) {
       boss.phase += dt * 2;
-      chase(boss, BOSS.speed, FIELD.width, dt, attract);
+      chase(boss, BOSS.speed * speedMul, FIELD.width, dt, attract);
       boss.spawnTimer -= dt;
       if (!attract && boss.spawnTimer <= 0 && state.drones.filter((d) => d.active).length < BOSS.maxDrones) {
         spawnDrone({ x: boss.x, y: boss.y });
@@ -616,7 +633,7 @@ export function createWorld(random) {
           if (kind === 'drone') spawnDrone();
           if (kind === 'darter') spawnDarter();
           if (kind === 'splitter') spawnSplitter();
-          const gap = Math.max(WAVE.spawnGapMin, WAVE.spawnGap - WAVE.spawnGapPerWave * (state.wave - 1));
+          const gap = Math.max(0.55, (WAVE.spawnGap - WAVE.spawnGapPerWave * (state.wave - 1)) * difficulty.spawnGapMul);
           spawnTimer = gap;
         }
       } else if (state.foesLeft <= 0) {
@@ -625,6 +642,7 @@ export function createWorld(random) {
         // boss waves just keep the run going.
         const bonus = WAVE.clearBonus + WAVE.clearBonusPerWave * state.wave;
         state.score += bonus;
+        state.stats.wavesCleared += 1;
         floatText(player.x, player.y - 30, `WAVE ${state.wave} CLEAR +${bonus}`, COLORS.gold);
         if (state.wave === WAVE.winWave) {
           events |= EVENT_WIN;
@@ -663,6 +681,15 @@ export function createWorld(random) {
     startWave(state.wave);
   }
 
+  /** Switch difficulty; it takes effect on the next reset (the next run). */
+  function setDifficulty(id) {
+    if (DIFFICULTY[id]) {
+      difficulty = DIFFICULTY[id];
+      state.difficulty = difficulty.id;
+    }
+    return difficulty;
+  }
+
   reset();
-  return { state, step, reset, firePulse, continueEndless };
+  return { state, step, reset, firePulse, continueEndless, setDifficulty };
 }

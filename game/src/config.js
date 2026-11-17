@@ -112,8 +112,38 @@ export const WAVE = {
   winWave: 5, // clearing this wave wins the run (endless play continues after)
 };
 
+// Difficulty: chosen on the title screen (1 / 2 / 3 or click), remembered
+// between visits. Every field is a multiplier or delta on the Standard hunt,
+// so the same seeds replay on every difficulty and the sim can measure the gap.
+export const DIFFICULTY = {
+  relaxed: {
+    id: 'relaxed', label: 'Relaxed', blurb: 'Slower foes · 4 hull',
+    speedMul: 0.8, chaseMul: 0.7, droneDelta: -1, mineDelta: -1,
+    spawnGapMul: 1.25, hull: 4, energyRechargeMul: 1.25, bossHits: 2,
+    darterDelay: 1, splitterDelay: 1, // darters from wave 3, splitters from wave 4
+  },
+  standard: {
+    id: 'standard', label: 'Standard', blurb: 'The intended hunt',
+    speedMul: 1, chaseMul: 1, droneDelta: 0, mineDelta: 0,
+    spawnGapMul: 1, hull: 3, energyRechargeMul: 1, bossHits: 3,
+    darterDelay: 0, splitterDelay: 0,
+  },
+  expert: {
+    id: 'expert', label: 'Expert', blurb: 'Faster foes · more hunters',
+    speedMul: 1.25, chaseMul: 1.3, droneDelta: 1, mineDelta: 1,
+    spawnGapMul: 0.8, hull: 3, energyRechargeMul: 0.9, bossHits: 4,
+    darterDelay: 0, splitterDelay: 0,
+  },
+};
+export const DIFFICULTY_IDS = ['relaxed', 'standard', 'expert'];
+
 // Presentation.
 export const BEST_KEY = 'nova-harvest-best';
+// Lifetime run stats (runs, wins, best wave, totals) — shown on the menu and
+// the game-over screen so a returning player sees their record at a glance.
+export const STATS_KEY = 'nova-harvest-stats';
+// Remembered settings: difficulty plus the music and SFX toggles.
+export const SETTINGS_KEY = 'nova-harvest-settings';
 export const COLORS = {
   bg: '#070a18',
   star: '#cdd8ff',

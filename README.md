@@ -21,7 +21,11 @@ Entry for the make.fun bounty **best-game-01** ($1,000, deadline Thu 19 Nov 2026
 https://github.com/ical-iann/best-game-01, commit
 09b93409e6aea916923491df6b605d80f640ce87, receipt
 01a1ea02-5f32-763b-8619-f0076237ed08); judge score 592,302. Improved in the
-build dir on 18 Nov 2026, ready for resubmission — see Verification below.
+build dir on 18 Nov 2026 and resubmitted (commit
+ecced4106ffbaba7172a08e51827699ca0582095 "Hopeful Lantern", receipt
+01a1ea40-4d1d-7745-b5c6-d9cdbe7ad90b); judge score 691,333, competition rank
+114 of 182, top-100 line ~699,775. Improved again in the build dir on 18 Nov
+2026 (second pass) — see Verification below — ready for resubmission.
 
 ## The game
 
@@ -37,39 +41,100 @@ shape the rest of the run. Clear 5 waves to win the run; after the win you can
 keep flying endless, or restart.
 
 - **Goal:** clear wave 5 and beat the Void Warden (then keep going endless if you want).
+- **Difficulty:** pick on the menu before a run — 1, 2 or 3, or click.
+  Relaxed flies slower foes, fewer hunters, 4 hull and a 2-hit Warden; Standard
+  is the intended hunt (3 hull, 3-hit Warden); Expert is faster, fields more
+  hunters, and the Warden takes 4 hits. The choice is remembered between visits.
 - **Score:** shards pay 10 × combo multiplier (up to ×6), a drone destroyed by
   a pulse pays 25, a darter 40, a splitter 30, a mini 15, the Warden 300, a
   cleared wave pays 100 + 25 per wave.
-- **Lose:** the skiff has 3 hull. A mine or a foe costs 1 hull and breaks your
+- **Lose:** the skiff has 3 hull (4 on Relaxed). A mine or a foe costs 1 hull and breaks your
   combo — unless an aegis shield eats the hit. At 0 hull the run ends.
 - **Controls:** WASD / arrows to fly (momentum + drag), Space for the pulse
   blast, 1 / 2 / 3 or click to pick an upgrade, P to pause, M to mute, R to
-  restart, C to continue after a win.
+  restart, C to continue after a win. On the menu, 1 / 2 / 3 (or a click)
+  picks the difficulty and the MUSIC / SFX pills toggle the sound layers; the
+  pills work on the pause screen too, and R restarts from pause.
+- **Record:** every finished run is folded into a career record kept in
+  localStorage (runs, wins, best wave, total shards and foes down) and shown on
+  the menu and the game-over screen next to the best score; each win and loss
+  also shows that run's own stats (shards, foes down, best chain, time).
 - **Feedback:** every pickup pops its points, every wave pays a bonus on screen,
   hits shake the field, and all sounds are synthesized with WebAudio over a
-  quiet generative bass line — no audio files, no network requests, no images.
-  Everything is drawn on canvas.
+  quiet generative bass line with a sparse A-minor pentatonic pluck — no audio
+  files, no network requests, no images. Music and sound effects mute
+  separately; M mutes everything. Everything is drawn on canvas.
 
 ## Files
 
 - `game/` — the playable game, static ES modules, no build step. `game/index.html`
   opens in desktop Chrome and plays offline.
-  - `game/src/` — one job each: `config.js` (every tuned number), `random.js`
+  - `game/src/` — one job each: `config.js` (every tuned number, plus the
+    three difficulties and the localStorage keys), `random.js`
     (seeded generator), `world.js` (simulation: skiff, shards, mines, drones,
-    darters, splitters, minis, the Warden, cells, waves, combo, upgrades),
+    darters, splitters, minis, the Warden, cells, waves, combo, upgrades —
+    with difficulty scaling and per-run stats),
     `upgrades.js` (the six wave-clear upgrades), `input.js` (keyboard +
-    pointer), `render.js` (canvas, HUD, six screens), `audio.js` (synthesized
-    sounds and the generative music loop), `shots.js` (staged screenshot scenes
-    with an autopilot), `main.js` (boot + fixed-step loop).
+    pointer), `render.js` (canvas, HUD, six screens, difficulty and settings
+    buttons), `audio.js` (synthesized sounds, the generative bass + melody
+    loop, separate music / SFX mutes), `shots.js` (staged screenshot scenes
+    with an autopilot), `main.js` (boot + fixed-step loop, settings and career
+    stats in localStorage).
 - `main.ts` — Node 22, stdlib only: copies `game/` + `screenshots/` to `/output`
   and writes `dossier.json` with the kit's `vendor/makefun-game.ts`.
 - `serve.ts` — tiny static server for local play: `node serve.ts`, then
   http://localhost:8080.
-- `screenshots/` — 4 real renders, 1280×720: `1-menu.png` (title), `2-play.png`
-  (wave 2, drones + mines + asteroids), `3-win.png` (victory, score 2800),
-  `4-over.png` (game over). Staged with `?shot=menu|play|win|over&seed=7`.
+- `screenshots/` — 4 real renders, 1280×720: `1-menu.png` (title, difficulty
+  and sound controls), `2-play.png` (wave 2, drones + mines + asteroids),
+  `3-win.png` (victory, score 2800, run stats), `4-over.png` (game over,
+  score 135, run stats). Staged with `?shot=menu|play|win|over&seed=7`.
 - `vendor/makefun-game.ts` — the kit's copy, unchanged.
 - `kit/` + `kit.tar.gz` — working material, not part of the entry.
+
+## Verification (18 Nov 2026, local — second improvement pass)
+
+The resubmitted entry (commit ecced41 "Hopeful Lantern") was judged 691,333
+(rank 114 of 182; top-100 line ~699,775, a gap of ~8,400), so it was reworked
+again in the build dir only: no bundle, check, push or submit was run here.
+
+- What changed: a difficulty select on the menu (Relaxed / Standard / Expert,
+  keys 1/2/3 or click, remembered between visits — foe speed, chase range,
+  foe counts, spawn pace, hull, pulse recharge and Warden hits all scale),
+  separate music and SFX toggles as clickable pills on the menu and the pause
+  screen (M still mutes everything; both toggles are remembered), persistent
+  career stats in localStorage (runs, wins, best wave, totals) shown on the
+  menu and game-over screens plus per-run stats (shards, foes down, best
+  chain, time) on the win and game-over screens, a quiet pentatonic melody
+  over the bass loop, the HUD now names the difficulty and shows an onboarding
+  hint for the first 8 seconds of wave 1, the pause screen shows score / wave
+  / difficulty / best with the sound pills and R to restart, and the menu's
+  start prompt no longer blinks — the old menu screenshot lost it exactly
+  because the staged capture landed on a blink-off frame.
+- Node simulation of the real world.js, 10 seeds × 3 difficulties × 2 pilots:
+  careful pilots win 10/10 on Relaxed (124–359 s, 0 hits), 10/10 on Standard
+  (128–235 s, 0–2 hits), 8/10 on Expert (120–200 s, 0–3 hits; losses seeds 42
+  and 99 on wave 5); sloppy pilots win 9/10 Relaxed, 9/10 Standard, 5/10
+  Expert. Careless pilots die on wave 2 in 16–36 s. The Warden's hits were
+  checked directly: 2 on Relaxed, 3 on Standard, 4 on Expert; wave-1 foes 2 /
+  3 / 4 and hull 4 / 3 / 3. Per-run stats populate on a win (e.g. seed 11
+  Standard: shards 5, foes down 65, pulses 44, waves cleared 5).
+- Play-tested live in headless Chromium (Playwright headless shell): menu →
+  Digit3 picks Expert (still on the title screen, setting stored) → click
+  Relaxed → Digit2 back to Standard → music pill off/on, SFX pill off/on →
+  reload still shows Expert → start → shard collected (score 10) → wave 1
+  cleared at ~16 s → upgrade screen with 3 choices → picked with Digit2 →
+  wave 2 → P pauses → music toggled on the pause screen → R restarts a fresh
+  run from pause → M mutes everything. Zero console/page errors throughout.
+  A second live run sat still until the hunters killed the skiff (game over,
+  wave 2, score 125 in 20 s): localStorage then held stats runs 1, bestWave 2
+  and best 125, and after a reload the menu showed best 125 and 1 run.
+- Screenshots: 4 PNGs, 1280×720, 223–246 KiB each (< 256 KiB), regenerated
+  from the new build at `?shot=menu|play|win|over&seed=7`. `shots.json`
+  unchanged (same 4-shot set, seed 7).
+- Static checks: every `game/src/*.js` parses (`node --check`); no external
+  references anywhere under game/; game/ is 92,302 bytes in 10 files,
+  screenshots 976,133 bytes total, so the dossier stays under the 1.5 MiB cap.
+  vendor/ untouched.
 
 ## Verification (18 Nov 2026, local — improvement pass)
 

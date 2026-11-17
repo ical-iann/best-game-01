@@ -5,6 +5,13 @@ export function createAudio() {
   let context = null;
   let master = null;
   let muted = false;
+  let musicTimer = null;
+  let musicStep = 0;
+  let musicNext = 0;
+
+  // A slow A-minor bass walk, one note a beat at 100 bpm, quiet under the play.
+  const BASS = [110.0, 87.31, 130.81, 98.0, 110.0, 87.31, 146.83, 98.0];
+  const BEAT = 60 / 100;
 
   function ensure() {
     if (context) return true;
@@ -18,6 +25,54 @@ export function createAudio() {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  function startMusic() {
+    if (musicTimer || !ensure()) return;
+    musicStep = 0;
+    musicNext = context.currentTime + 0.1;
+    musicTimer = setInterval(() => {
+      if (muted || context.state === 'suspended') {
+        musicNext = Math.max(musicNext, context.currentTime + 0.1);
+        return;
+      }
+      while (musicNext < context.currentTime + 0.4) {
+        const freq = BASS[musicStep % BASS.length];
+        const osc = context.createOscillator();
+        const amp = context.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, musicNext);
+        amp.gain.setValueAtTime(0.0001, musicNext);
+        amp.gain.exponentialRampToValueAtTime(0.11, musicNext + 0.05);
+        amp.gain.exponentialRampToValueAtTime(0.0001, musicNext + BEAT * 0.95);
+        osc.connect(amp);
+        amp.connect(master);
+        osc.start(musicNext);
+        osc.stop(musicNext + BEAT);
+        if (musicStep % 8 === 4) {
+          const fifth = context.createOscillator();
+          const fifthAmp = context.createGain();
+          fifth.type = 'sine';
+          fifth.frequency.setValueAtTime(freq * 1.5, musicNext);
+          fifthAmp.gain.setValueAtTime(0.0001, musicNext);
+          fifthAmp.gain.exponentialRampToValueAtTime(0.05, musicNext + 0.05);
+          fifthAmp.gain.exponentialRampToValueAtTime(0.0001, musicNext + BEAT * 0.9);
+          fifth.connect(fifthAmp);
+          fifthAmp.connect(master);
+          fifth.start(musicNext);
+          fifth.stop(musicNext + BEAT);
+        }
+        musicNext += BEAT;
+        musicStep += 1;
+      }
+    }, 200);
+  }
+
+  function stopMusic() {
+    if (musicTimer) {
+      clearInterval(musicTimer);
+      musicTimer = null;
     }
   }
 
@@ -51,6 +106,7 @@ export function createAudio() {
     unlock() {
       ensure();
       if (context && context.state === 'suspended') context.resume().catch(() => {});
+      startMusic();
     },
     collect(combo) {
       const step = Math.min(combo, 12);
@@ -70,6 +126,22 @@ export function createAudio() {
     },
     droneDown() {
       tone(440, 0.1, 'square', 0.25, 880);
+    },
+    shield() {
+      tone(660, 0.12, 'sine', 0.35, 990);
+      tone(880, 0.16, 'sine', 0.25, 1320);
+    },
+    bossDown() {
+      [220, 277, 330, 440, 554].forEach((freq, index) => {
+        setTimeout(() => tone(freq, 0.2, 'square', 0.3), index * 110);
+      });
+    },
+    upgrade() {
+      tone(523, 0.1, 'triangle', 0.35);
+      setTimeout(() => tone(784, 0.16, 'triangle', 0.35), 100);
+    },
+    cell() {
+      tone(880, 0.1, 'sine', 0.3, 1174);
     },
     wave() {
       tone(523, 0.12, 'sine', 0.35);

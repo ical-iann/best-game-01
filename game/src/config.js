@@ -6,7 +6,7 @@ export const FIELD = { width: 1280, height: 720 };
 export const STEP = 1 / 60;
 
 // How long a real second of play takes to re-simulate in a screenshot scene.
-export const SHOT_SECONDS = { menu: 6, play: 22, action: 34, over: 600 };
+export const SHOT_SECONDS = { menu: 6, play: 30, over: 600 };
 
 // The skiff the player flies.
 export const SKIFF = {
@@ -19,7 +19,7 @@ export const SKIFF = {
   pulseRadius: 140,
   pulseCost: 30,
   energyMax: 100,
-  energyRecharge: 14, // per second
+  energyRecharge: 18, // per second
   fireCooldown: 0.0, // pulse has no cooldown beyond its energy cost
 };
 
@@ -43,18 +43,70 @@ export const MINE = {
 
 export const DRONE = {
   radius: 15,
-  speed: 95,
+  speed: 95, // wave-1 speed; +8 per wave, so late waves hunt hard
   score: 25, // paid when a pulse blast destroys one
-  chase: 420, // starts chasing inside this range
+  chase: 420, // wave-1 chase range; +80 per wave, so late waves hunt hard
+  speedPerWave: 8,
+  chasePerWave: 80,
+};
+
+// Darters are fast zigzag hunters: hard to catch in a pulse, worth more.
+export const DARTER = {
+  radius: 11,
+  speed: 175, // wave-2 speed; +8 per wave after that
+  score: 40,
+  chase: 520,
+  speedPerWave: 8,
+  chasePerWave: 60,
+  zigzag: 3.1, // sideways weave, radians per second
+};
+
+// Splitters are slow armoured orbs: a pulse cracks one into two minis.
+export const SPLITTER = {
+  radius: 21,
+  speed: 55,
+  score: 30,
+  chase: 500,
+};
+
+export const MINI = {
+  radius: 9,
+  speed: 135, // +8 per wave after the wave they split in
+  score: 15,
+  chase: 460,
+  speedPerWave: 8,
+  chasePerWave: 80,
+};
+
+// The Void Warden ends wave 5: three pulse hits to kill, and it launches drones.
+export const BOSS = {
+  radius: 42,
+  speed: 55,
+  hits: 3,
+  score: 300,
+  spawnEvery: 7, // seconds between drone launches, while fewer than maxDrones
+  maxDrones: 3,
+};
+
+// Cells drift in rarely: a shield that eats one hit, or a surge of pulse energy.
+export const CELL = {
+  radius: 13,
+  spawnEvery: 24, // seconds between cell arrivals
+  surgeEnergy: 50,
 };
 
 // Waves: wave n fields 3 + 2n drones and 2 + n mines, one at a time.
+// Darters join from wave 2, splitters from wave 3; wave 5 is the Warden.
 export const WAVE = {
   droneBase: 3,
   dronePerWave: 2,
   mineBase: 2,
   minePerWave: 1,
-  spawnGap: 1.4, // seconds between drone arrivals
+  darterPerWave: 1, // one per wave from wave 2
+  splitterPerWave: 1, // one per wave from wave 3
+  spawnGap: 1.4, // seconds between arrivals on wave 1
+  spawnGapPerWave: 0.12, // arrivals quicken each wave
+  spawnGapMin: 0.7,
   clearBonus: 100,
   clearBonusPerWave: 25,
   winWave: 5, // clearing this wave wins the run (endless play continues after)
@@ -71,6 +123,15 @@ export const COLORS = {
   mineCore: '#ffb3c0',
   drone: '#ff9f2e',
   droneCore: '#ffe1b3',
+  darter: '#ff5df2',
+  darterCore: '#ffd6fb',
+  splitter: '#b78cff',
+  splitterCore: '#efe6ff',
+  mini: '#ff9f2e',
+  boss: '#ff2e63',
+  bossCore: '#ffc2d1',
+  shield: '#59d8ff',
+  surge: '#ffd166',
   skiff: '#59c2ff',
   skiffCore: '#eaf6ff',
   pulse: '#7ef0ff',

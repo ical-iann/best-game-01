@@ -1,7 +1,9 @@
-// Nova Harvest — the simulation: one skiff, drifting shards, mines and hunter drones.
-// The world advances in fixed steps and nothing here touches the screen or the sound;
-// it reports what happened as event bits so the caller can announce and play them.
-import { COLORS, DRONE, FIELD, MINE, SHARD, SKIFF, WAVE } from './config.js';
+// Nova Harvest — the simulation: one skiff, drifting shards, mines, hunter
+// drones, darters, splitters and the Void Warden, plus shield and surge cells.
+// The world advances in fixed steps and nothing here touches the screen or the
+// sound; it reports what happened as event bits so the caller can announce and
+// play them.
+import { BOSS, CELL, COLORS, DARTER, DRONE, FIELD, MINE, MINI, SHARD, SKIFF, SPLITTER, WAVE } from './config.js';
 
 export const EVENT_HIT = 1;
 export const EVENT_OVER = 2;
@@ -9,6 +11,9 @@ export const EVENT_WAVE = 4;
 export const EVENT_WIN = 8;
 export const EVENT_PULSE = 16;
 export const EVENT_SHARD = 32;
+export const EVENT_SHIELD = 64;
+export const EVENT_BOSS = 128;
+export const EVENT_CELL = 256;
 
 const TAU = Math.PI * 2;
 
@@ -35,20 +40,35 @@ export function createWorld(random) {
     combo: 0,
     comboTimer: 0,
     multiplier: 1,
-    dronesLeft: 0, // spawned and still alive, plus those still to arrive
+    foesLeft: 0, // foes spawned and still alive, plus those still to arrive
     shake: 0,
-    player: { x: FIELD.width / 2, y: FIELD.height / 2, vx: 0, vy: 0, angle: -Math.PI / 2, hull: SKIFF.hull, invuln: 0, energy: SKIFF.energyMax, pulseAge: 9 },
+    player: {
+      x: FIELD.width / 2, y: FIELD.height / 2, vx: 0, vy: 0, angle: -Math.PI / 2,
+      hull: SKIFF.hull, maxHull: SKIFF.hull, invuln: 0, shield: false,
+      energy: SKIFF.energyMax, pulseAge: 9,
+      pulseRadius: SKIFF.pulseRadius, pulseCost: SKIFF.pulseCost,
+      energyRecharge: SKIFF.energyRecharge, thrustMul: 1, maxSpeed: SKIFF.maxSpeed,
+      magnet: 0,
+    },
     shards: [],
     mines: [],
     drones: [],
+    darters: [],
+    splitters: [],
+    minis: [],
+    boss: null,
+    cells: [],
     particles: [],
     floats: [],
     stars: [],
     nebulae: [],
+    asteroids: [],
   };
-  let dronesToSpawn = 0;
-  let droneTimer = 0;
+  let spawnQueue = [];
+  let spawnTimer = 0;
   let shardTimer = 0;
+  let cellTimer = CELL.spawnEvery;
+  let cellKind = 0;
   let wavePause = 0;
 
   function burst(x, y, color, count, speed) {
@@ -95,30 +115,101 @@ export function createWorld(random) {
     });
   }
 
-  function spawnDrone() {
-    // Drones slip in from the edge farthest from the skiff.
-    const edge = random.int(0, 4);
-    let x = 40;
-    let y = 40;
-    if (edge === 0) { x = random.range(60, FIELD.width - 60); y = 36; }
-    if (edge === 1) { x = random.range(60, FIELD.width - 60); y = FIELD.height - 36; }
-    if (edge === 2) { x = 36; y = random.range(60, FIELD.height - 60); }
-    if (edge === 3) { x = FIELD.width - 36; y = random.range(60, FIELD.height - 60); }
-    state.drones.push({ x, y, vx: 0, vy: 0, active: true, phase: random.next() * TAU });
+  function edgePoint() {
+    // A point just inside the edge farthest from the skiff: foes slip in from
+    // far away, so the player always has time to see them coming.
+    const player = state.player;
+    const edges = [
+      { x: FIELD.width / 2, y: 36 },
+      { x: FIELD.width / 2, y: FIELD.height - 36 },
+      { x: 36, y: FIELD.height / 2 },
+      { x: FIELD.width - 36, y: FIELD.height / 2 },
+    ];
+    let best = edges[0];
+    let bestD = -1;
+    for (const edge of edges) {
+      const d = dist2(edge.x, edge.y, player.x, player.y);
+      if (d > bestD) { bestD = d; best = edge; }
+    }
+    // Jitter along the chosen edge so arrivals never stack on one point.
+    if (best.y === 36 || best.y === FIELD.height - 36) {
+      return { x: random.range(60, FIELD.width - 60), y: best.y };
+    }
+    return { x: best.x, y: random.range(60, FIELD.height - 60) };
+  }
+
+  function spawnDrone(at) {
+    const spot = at ?? edgePoint();
+    state.drones.push({ x: spot.x, y: spot.y, vx: 0, vy: 0, active: true, phase: random.next() * TAU, grace: 1.5 });
+  }
+
+  function spawnDarter() {
+    const spot = edgePoint();
+    state.darters.push({ x: spot.x, y: spot.y, vx: 0, vy: 0, active: true, phase: random.next() * TAU, grace: 1.5 });
+  }
+
+  function spawnSplitter() {
+    const spot = edgePoint();
+    state.splitters.push({ x: spot.x, y: spot.y, vx: 0, vy: 0, active: true, phase: random.next() * TAU, grace: 1.5 });
+  }
+
+  function spawnMini(x, y) {
+    const angle = random.next() * TAU;
+    state.minis.push({
+      x, y,
+      vx: Math.cos(angle) * MINI.speed * 0.7,
+      vy: Math.sin(angle) * MINI.speed * 0.7,
+      active: true, phase: random.next() * TAU, grace: 1.0,
+    });
+  }
+
+  function spawnBoss() {
+    const spot = edgePoint();
+    state.boss = {
+      x: spot.x, y: spot.y, vx: 0, vy: 0, hp: BOSS.hits, maxHp: BOSS.hits,
+      phase: random.next() * TAU, spawnTimer: 3, active: true,
+    };
+  }
+
+  function spawnCell() {
+    const at = farFromPlayer(random, state.player, 160);
+    const kind = cellKind % 2 === 0 ? 'shield' : 'surge';
+    cellKind += 1;
+    const angle = random.next() * TAU;
+    state.cells.push({
+      x: at.x, y: at.y,
+      vx: Math.cos(angle) * 10, vy: Math.sin(angle) * 10,
+      kind, phase: random.next() * TAU, active: true,
+    });
   }
 
   function startWave(wave) {
     const mines = WAVE.mineBase + WAVE.minePerWave * (wave - 1);
     const drones = WAVE.droneBase + WAVE.dronePerWave * (wave - 1);
+    const darters = wave >= 2 ? WAVE.darterPerWave * (wave - 1) : 0;
+    const splitters = wave >= 3 ? WAVE.splitterPerWave * (wave - 2) : 0;
+    const bossWave = wave % WAVE.winWave === 0;
     for (let index = 0; index < mines; index += 1) spawnMine();
-    dronesToSpawn = drones;
-    state.dronesLeft = drones;
-    droneTimer = 0.8;
+    spawnQueue = [];
+    for (let index = 0; index < drones; index += 1) spawnQueue.push('drone');
+    for (let index = 0; index < darters; index += 1) spawnQueue.push('darter');
+    for (let index = 0; index < splitters; index += 1) spawnQueue.push('splitter');
+    // Shuffle the arrivals so the wave never comes in one kind at a time.
+    for (let index = spawnQueue.length - 1; index > 0; index -= 1) {
+      const other = random.int(0, index + 1);
+      const held = spawnQueue[index];
+      spawnQueue[index] = spawnQueue[other];
+      spawnQueue[other] = held;
+    }
+    state.foesLeft = spawnQueue.length + (bossWave ? 1 : 0);
+    if (bossWave) spawnBoss();
+    spawnTimer = 0.8;
+    floatText(FIELD.width / 2, 150, `WAVE ${wave}${bossWave ? ' — THE VOID WARDEN' : ''}`, COLORS.gold);
   }
 
   function buildSky() {
     state.stars = [];
-    for (let index = 0; index < 130; index += 1) {
+    for (let index = 0; index < 220; index += 1) {
       state.stars.push({
         x: random.range(0, FIELD.width),
         y: random.range(0, FIELD.height),
@@ -132,6 +223,22 @@ export function createWorld(random) {
       { x: 1060, y: 560, radius: 300, color: 'rgba(16, 90, 110, 0.20)' },
       { x: 640, y: 380, radius: 200, color: 'rgba(120, 30, 90, 0.13)' },
     ];
+    state.asteroids = [];
+    for (let index = 0; index < 9; index += 1) {
+      const verts = [];
+      const count = 7 + random.int(0, 3);
+      for (let v = 0; v < count; v += 1) verts.push(random.range(0.7, 1.25));
+      state.asteroids.push({
+        x: random.range(0, FIELD.width),
+        y: random.range(0, FIELD.height),
+        radius: random.range(18, 46),
+        rot: random.next() * TAU,
+        rotSpeed: random.range(-0.12, 0.12),
+        vx: random.range(-7, 7),
+        vy: random.range(-5, 5),
+        verts,
+      });
+    }
   }
 
   function reset() {
@@ -141,17 +248,31 @@ export function createWorld(random) {
     state.combo = 0;
     state.comboTimer = 0;
     state.multiplier = 1;
-    state.dronesLeft = 0;
+    state.foesLeft = 0;
     state.shake = 0;
-    state.player = { x: FIELD.width / 2, y: FIELD.height / 2, vx: 0, vy: 0, angle: -Math.PI / 2, hull: SKIFF.hull, invuln: 0, energy: SKIFF.energyMax, pulseAge: 9 };
+    state.player = {
+      x: FIELD.width / 2, y: FIELD.height / 2, vx: 0, vy: 0, angle: -Math.PI / 2,
+      hull: SKIFF.hull, maxHull: SKIFF.hull, invuln: 0, shield: false,
+      energy: SKIFF.energyMax, pulseAge: 9,
+      pulseRadius: SKIFF.pulseRadius, pulseCost: SKIFF.pulseCost,
+      energyRecharge: SKIFF.energyRecharge, thrustMul: 1, maxSpeed: SKIFF.maxSpeed,
+      magnet: 0,
+    };
     state.shards = [];
     state.mines = [];
     state.drones = [];
+    state.darters = [];
+    state.splitters = [];
+    state.minis = [];
+    state.boss = null;
+    state.cells = [];
     state.particles = [];
     state.floats = [];
-    dronesToSpawn = 0;
-    droneTimer = 0;
+    spawnQueue = [];
+    spawnTimer = 0;
     shardTimer = 0;
+    cellTimer = CELL.spawnEvery;
+    cellKind = 0;
     wavePause = 0;
     buildSky();
     for (let index = 0; index < 4; index += 1) spawnShard();
@@ -161,35 +282,76 @@ export function createWorld(random) {
   /** Fire the pulse blast. Returns true when it went off, false when energy is short. */
   function firePulse() {
     const player = state.player;
-    if (player.energy < SKIFF.pulseCost) return false;
-    player.energy -= SKIFF.pulseCost;
+    if (player.energy < player.pulseCost) return false;
+    player.energy -= player.pulseCost;
     player.pulseAge = 0;
     let kills = 0;
+    let events = 0;
+    const radius = player.pulseRadius;
     for (const mine of state.mines) {
       if (!mine.active) continue;
-      if (dist2(mine.x, mine.y, player.x, player.y) < (SKIFF.pulseRadius + MINE.radius) ** 2) {
+      if (dist2(mine.x, mine.y, player.x, player.y) < (radius + MINE.radius) ** 2) {
         mine.active = false;
         burst(mine.x, mine.y, COLORS.mine, 10, 130);
       }
     }
-    for (const drone of state.drones) {
-      if (!drone.active) continue;
-      if (dist2(drone.x, drone.y, player.x, player.y) < (SKIFF.pulseRadius + DRONE.radius) ** 2) {
-        drone.active = false;
-        kills += 1;
-        state.score += DRONE.score;
-        state.dronesLeft -= 1;
-        burst(drone.x, drone.y, COLORS.drone, 12, 150);
-        floatText(drone.x, drone.y - 10, `+${DRONE.score}`, COLORS.drone);
+    const pulseKill = (list, kindRadius, score, color, onKill) => {
+      for (const foe of list) {
+        if (!foe.active) continue;
+        if (dist2(foe.x, foe.y, player.x, player.y) < (radius + kindRadius) ** 2) {
+          foe.active = false;
+          kills += 1;
+          state.score += score;
+          state.foesLeft -= 1;
+          burst(foe.x, foe.y, color, 12, 150);
+          floatText(foe.x, foe.y - 10, `+${score}`, color);
+          if (onKill) onKill(foe);
+        }
+      }
+    };
+    pulseKill(state.drones, DRONE.radius, DRONE.score, COLORS.drone);
+    pulseKill(state.darters, DARTER.radius, DARTER.score, COLORS.darter);
+    pulseKill(state.minis, MINI.radius, MINI.score, COLORS.mini);
+    pulseKill(state.splitters, SPLITTER.radius, SPLITTER.score, COLORS.splitter, (foe) => {
+      spawnMini(foe.x - 14, foe.y);
+      spawnMini(foe.x + 14, foe.y);
+      state.foesLeft += 2;
+    });
+    const boss = state.boss;
+    if (boss && boss.active && dist2(boss.x, boss.y, player.x, player.y) < (radius + BOSS.radius) ** 2) {
+      boss.hp -= 1;
+      burst(boss.x, boss.y, COLORS.boss, 18, 200);
+      state.shake = Math.max(state.shake, 8);
+      if (boss.hp <= 0) {
+        boss.active = false;
+        state.boss = null;
+        state.score += BOSS.score;
+        state.foesLeft -= 1;
+        burst(boss.x, boss.y, COLORS.boss, 40, 280);
+        burst(boss.x, boss.y, COLORS.gold, 24, 220);
+        floatText(boss.x, boss.y - 20, `WARDEN DOWN +${BOSS.score}`, COLORS.gold);
+        events |= EVENT_BOSS;
+      } else {
+        floatText(boss.x, boss.y - 20, `WARDEN ${boss.hp}/${boss.maxHp}`, COLORS.boss);
       }
     }
-    if (kills > 0) burst(player.x, player.y, COLORS.pulse, 8, 90);
-    return true;
+    if (kills > 0) {
+      burst(player.x, player.y, COLORS.pulse, 8, 90);
+      events |= EVENT_PULSE;
+    }
+    return { fired: true, events };
   }
 
   function hurtPlayer(source) {
     const player = state.player;
     if (player.invuln > 0) return 0;
+    if (player.shield) {
+      player.shield = false;
+      player.invuln = 1;
+      burst(player.x, player.y, COLORS.shield, 20, 200);
+      floatText(player.x, player.y - 30, 'SHIELD DOWN', COLORS.shield);
+      return EVENT_SHIELD;
+    }
     player.hull -= 1;
     player.invuln = SKIFF.invulnerableSeconds;
     state.shake = 10;
@@ -200,6 +362,54 @@ export function createWorld(random) {
     burst(source.x, source.y, COLORS.mine, 14, 180);
     if (player.hull <= 0) return EVENT_OVER;
     return EVENT_HIT;
+  }
+
+  /** Chase the skiff inside `chase`, drift otherwise; returns nothing.
+   *  The last two foes of a wave smell blood: they hunt faster, from anywhere. */
+  function chase(foe, speed, chaseRange, dt, attract, weave = 0) {
+    const player = state.player;
+    const frenzy = state.foesLeft <= 2 ? 1.6 : 1;
+    const pace = speed * frenzy;
+    const range = frenzy > 1 ? FIELD.width : chaseRange;
+    const dx = player.x - foe.x;
+    const dy = player.y - foe.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (!attract && d < range) {
+      foe.vx += (dx / d) * pace * 1.6 * dt;
+      foe.vy += (dy / d) * pace * 1.6 * dt;
+      if (weave) {
+        const side = Math.sin(foe.phase * DARTER.zigzag);
+        foe.vx += (-dy / d) * side * pace * 1.2 * dt;
+        foe.vy += (dx / d) * side * pace * 1.2 * dt;
+      }
+    } else {
+      foe.vx += Math.cos(foe.phase * 0.7) * 24 * dt;
+      foe.vy += Math.sin(foe.phase * 0.7) * 24 * dt;
+    }
+    const cap = attract ? 40 : pace;
+    const v = Math.hypot(foe.vx, foe.vy);
+    if (v > cap) {
+      foe.vx = (foe.vx / v) * cap;
+      foe.vy = (foe.vy / v) * cap;
+    }
+    foe.x += foe.vx * dt;
+    foe.y += foe.vy * dt;
+    if (foe.x < 20) { foe.x = 20; foe.vx = Math.abs(foe.vx); }
+    if (foe.x > FIELD.width - 20) { foe.x = FIELD.width - 20; foe.vx = -Math.abs(foe.vx); }
+    if (foe.y < 44) { foe.y = 44; foe.vy = Math.abs(foe.vy); }
+    if (foe.y > FIELD.height - 20) { foe.y = FIELD.height - 20; foe.vy = -Math.abs(foe.vy); }
+  }
+
+  function touchFoe(foe, radius, dt) {
+    // A foe that touches the skiff hurts it and dies with it.
+    const player = state.player;
+    const d = Math.hypot(player.x - foe.x, player.y - foe.y);
+    if (d < radius + SKIFF.radius - 2) {
+      foe.active = false;
+      state.foesLeft -= 1;
+      return hurtPlayer(foe);
+    }
+    return 0;
   }
 
   function step(dt, thrust, attract) {
@@ -219,15 +429,15 @@ export function createWorld(random) {
       player.vx *= Math.pow(0.4, dt);
       player.vy *= Math.pow(0.4, dt);
     } else {
-      player.vx += thrust.x * SKIFF.thrust * dt;
-      player.vy += thrust.y * SKIFF.thrust * dt;
+      player.vx += thrust.x * SKIFF.thrust * player.thrustMul * dt;
+      player.vy += thrust.y * SKIFF.thrust * player.thrustMul * dt;
       const drag = Math.pow(SKIFF.drag, dt * 60);
       player.vx *= drag;
       player.vy *= drag;
       const speed = Math.hypot(player.vx, player.vy);
-      if (speed > SKIFF.maxSpeed) {
-        player.vx = (player.vx / speed) * SKIFF.maxSpeed;
-        player.vy = (player.vy / speed) * SKIFF.maxSpeed;
+      if (speed > player.maxSpeed) {
+        player.vx = (player.vx / speed) * player.maxSpeed;
+        player.vy = (player.vy / speed) * player.maxSpeed;
       }
     }
     player.x += player.vx * dt;
@@ -239,7 +449,7 @@ export function createWorld(random) {
     if (player.y > FIELD.height - SKIFF.radius) { player.y = FIELD.height - SKIFF.radius; player.vy = -Math.abs(player.vy) * 0.5; }
     if (player.invuln > 0) player.invuln -= dt;
     if (player.pulseAge < 9) player.pulseAge += dt;
-    if (!attract) player.energy = Math.min(SKIFF.energyMax, player.energy + SKIFF.energyRecharge * dt);
+    if (!attract) player.energy = Math.min(SKIFF.energyMax, player.energy + player.energyRecharge * dt);
 
     // The combo chain lives only while pickups keep coming.
     if (state.comboTimer > 0) {
@@ -250,10 +460,18 @@ export function createWorld(random) {
       }
     }
 
-    // Shards drift, sparkle, and get picked up.
+    // Shards drift, sparkle, and get picked up; a magnet pulls them in.
     for (const shard of state.shards) {
       if (!shard.active) continue;
       shard.phase += dt * 3;
+      if (!attract && player.magnet > 0) {
+        const d = Math.hypot(player.x - shard.x, player.y - shard.y);
+        const reach = 120 + 60 * player.magnet;
+        if (d < reach && d > 1) {
+          shard.vx += ((player.x - shard.x) / d) * 260 * dt;
+          shard.vy += ((player.y - shard.y) / d) * 260 * dt;
+        }
+      }
       shard.x += shard.vx * dt;
       shard.y += shard.vy * dt;
       if (shard.x < 20 || shard.x > FIELD.width - 20) shard.vx *= -1;
@@ -272,6 +490,30 @@ export function createWorld(random) {
     }
     state.shards = state.shards.filter((shard) => shard.active);
 
+    // Cells drift in rarely: a shield eats one hit, a surge refills the pulse.
+    for (const cell of state.cells) {
+      if (!cell.active) continue;
+      cell.phase += dt * 2;
+      cell.x += cell.vx * dt;
+      cell.y += cell.vy * dt;
+      if (cell.x < 20 || cell.x > FIELD.width - 20) cell.vx *= -1;
+      if (cell.y < 44 || cell.y > FIELD.height - 20) cell.vy *= -1;
+      if (!attract && dist2(cell.x, cell.y, player.x, player.y) < (CELL.radius + SKIFF.radius) ** 2) {
+        cell.active = false;
+        if (cell.kind === 'shield') {
+          player.shield = true;
+          floatText(player.x, player.y - 30, 'AEGIS SHIELD UP', COLORS.shield);
+          burst(cell.x, cell.y, COLORS.shield, 12, 140);
+        } else {
+          player.energy = Math.min(SKIFF.energyMax, player.energy + CELL.surgeEnergy);
+          floatText(player.x, player.y - 30, `SURGE +${CELL.surgeEnergy}`, COLORS.surge);
+          burst(cell.x, cell.y, COLORS.surge, 12, 140);
+        }
+        events |= EVENT_CELL;
+      }
+    }
+    state.cells = state.cells.filter((cell) => cell.active);
+
     // Mines drift and punish a touch.
     for (const mine of state.mines) {
       if (!mine.active) continue;
@@ -287,62 +529,104 @@ export function createWorld(random) {
     }
     state.mines = state.mines.filter((mine) => mine.active);
 
-    // Drones hunt the skiff once it comes close, and punish a touch.
+    // The hunters: drones chase, darters weave in fast, splitters lumber, minis swarm.
+    // Each kind hunts harder the deeper the run goes.
+    const wv = state.wave - 1;
     for (const drone of state.drones) {
       if (!drone.active) continue;
       drone.phase += dt * 2;
-      const dx = player.x - drone.x;
-      const dy = player.y - drone.y;
-      const d = Math.hypot(dx, dy) || 1;
-      if (!attract && d < DRONE.chase) {
-        drone.vx += (dx / d) * DRONE.speed * 1.6 * dt;
-        drone.vy += (dy / d) * DRONE.speed * 1.6 * dt;
-      } else {
-        drone.vx += Math.cos(drone.phase * 0.7) * 24 * dt;
-        drone.vy += Math.sin(drone.phase * 0.7) * 24 * dt;
-      }
-      const speed = Math.hypot(drone.vx, drone.vy);
-      const cap = attract ? 40 : DRONE.speed;
-      if (speed > cap) {
-        drone.vx = (drone.vx / speed) * cap;
-        drone.vy = (drone.vy / speed) * cap;
-      }
-      drone.x += drone.vx * dt;
-      drone.y += drone.vy * dt;
-      if (drone.x < 20) { drone.x = 20; drone.vx = Math.abs(drone.vx); }
-      if (drone.x > FIELD.width - 20) { drone.x = FIELD.width - 20; drone.vx = -Math.abs(drone.vx); }
-      if (drone.y < 44) { drone.y = 44; drone.vy = Math.abs(drone.vy); }
-      if (drone.y > FIELD.height - 20) { drone.y = FIELD.height - 20; drone.vy = -Math.abs(drone.vy); }
-      if (!attract && player.invuln <= 0 && d < DRONE.radius + SKIFF.radius - 2) {
-        drone.active = false;
-        state.dronesLeft -= 1;
-        events |= hurtPlayer(drone);
-      }
+      if (drone.grace > 0) drone.grace -= dt;
+      chase(drone, DRONE.speed + DRONE.speedPerWave * wv, Math.min(700, DRONE.chase + DRONE.chasePerWave * wv), dt, attract || drone.grace > 0);
+      if (!attract && player.invuln <= 0 && drone.grace <= 0) events |= touchFoe(drone, DRONE.radius, dt);
     }
     state.drones = state.drones.filter((drone) => drone.active);
+    for (const darter of state.darters) {
+      if (!darter.active) continue;
+      darter.phase += dt * 2;
+      if (darter.grace > 0) darter.grace -= dt;
+      chase(darter, DARTER.speed + DARTER.speedPerWave * wv, Math.min(700, DARTER.chase + DARTER.chasePerWave * wv), dt, attract || darter.grace > 0, 1);
+      if (!attract && player.invuln <= 0 && darter.grace <= 0) events |= touchFoe(darter, DARTER.radius, dt);
+    }
+    state.darters = state.darters.filter((darter) => darter.active);
+    for (const splitter of state.splitters) {
+      if (!splitter.active) continue;
+      splitter.phase += dt * 2;
+      if (splitter.grace > 0) splitter.grace -= dt;
+      chase(splitter, SPLITTER.speed, SPLITTER.chase, dt, attract || splitter.grace > 0);
+      if (!attract && player.invuln <= 0 && splitter.grace <= 0) events |= touchFoe(splitter, SPLITTER.radius, dt);
+    }
+    state.splitters = state.splitters.filter((splitter) => splitter.active);
+    for (const mini of state.minis) {
+      if (!mini.active) continue;
+      mini.phase += dt * 2;
+      if (mini.grace > 0) mini.grace -= dt;
+      chase(mini, MINI.speed + MINI.speedPerWave * wv, Math.min(700, MINI.chase + MINI.chasePerWave * wv), dt, attract || mini.grace > 0);
+      if (!attract && player.invuln <= 0 && mini.grace <= 0) events |= touchFoe(mini, MINI.radius, dt);
+    }
+    state.minis = state.minis.filter((mini) => mini.active);
 
-    // Spawning: shards keep the field worth crossing; drones arrive in a trickle.
+    // The Void Warden lumbers after the skiff and launches drones.
+    const boss = state.boss;
+    if (boss && boss.active) {
+      boss.phase += dt * 2;
+      chase(boss, BOSS.speed, FIELD.width, dt, attract);
+      boss.spawnTimer -= dt;
+      if (!attract && boss.spawnTimer <= 0 && state.drones.filter((d) => d.active).length < BOSS.maxDrones) {
+        spawnDrone({ x: boss.x, y: boss.y });
+        state.foesLeft += 1;
+        boss.spawnTimer = BOSS.spawnEvery;
+        burst(boss.x, boss.y, COLORS.boss, 8, 120);
+      }
+      if (!attract && player.invuln <= 0) {
+        const d = Math.hypot(player.x - boss.x, player.y - boss.y);
+        if (d < BOSS.radius + SKIFF.radius - 2) events |= hurtPlayer(boss);
+      }
+    }
+
+    // Asteroids drift behind everything, wrapping around the field.
+    for (const rock of state.asteroids) {
+      rock.x += rock.vx * dt;
+      rock.y += rock.vy * dt;
+      rock.rot += rock.rotSpeed * dt;
+      if (rock.x < -60) rock.x = FIELD.width + 60;
+      if (rock.x > FIELD.width + 60) rock.x = -60;
+      if (rock.y < -60) rock.y = FIELD.height + 60;
+      if (rock.y > FIELD.height + 60) rock.y = -60;
+    }
+
+    // Spawning: shards keep the field worth crossing; foes arrive in a trickle
+    // that quickens with the wave; a cell drifts in now and then.
     if (!attract) {
       shardTimer -= dt;
       if (shardTimer <= 0 && state.shards.length < SHARD.maxAlive) {
         spawnShard();
         shardTimer = SHARD.spawnEvery;
       }
+      cellTimer -= dt;
+      if (cellTimer <= 0 && state.cells.length === 0) {
+        spawnCell();
+        cellTimer = CELL.spawnEvery;
+      }
       if (wavePause > 0) {
         wavePause -= dt;
-      } else if (dronesToSpawn > 0) {
-        droneTimer -= dt;
-        if (droneTimer <= 0) {
-          spawnDrone();
-          dronesToSpawn -= 1;
-          droneTimer = WAVE.spawnGap;
+      } else if (spawnQueue.length > 0) {
+        spawnTimer -= dt;
+        if (spawnTimer <= 0) {
+          const kind = spawnQueue.shift();
+          if (kind === 'drone') spawnDrone();
+          if (kind === 'darter') spawnDarter();
+          if (kind === 'splitter') spawnSplitter();
+          const gap = Math.max(WAVE.spawnGapMin, WAVE.spawnGap - WAVE.spawnGapPerWave * (state.wave - 1));
+          spawnTimer = gap;
         }
-      } else if (state.dronesLeft <= 0) {
+      } else if (state.foesLeft <= 0) {
         // The wave is clear: pay the bonus, open the next one, or win the run.
+        // Only wave 5 wins: after continueEndless the run is past it, so later
+        // boss waves just keep the run going.
         const bonus = WAVE.clearBonus + WAVE.clearBonusPerWave * state.wave;
         state.score += bonus;
         floatText(player.x, player.y - 30, `WAVE ${state.wave} CLEAR +${bonus}`, COLORS.gold);
-        if (state.wave >= WAVE.winWave) {
+        if (state.wave === WAVE.winWave) {
           events |= EVENT_WIN;
         } else {
           state.wave += 1;

@@ -7,6 +7,9 @@ export const ACTION_PULSE = 4;
 export const ACTION_RESTART = 8;
 export const ACTION_MUTE = 16;
 export const ACTION_CONTINUE = 32;
+export const ACTION_CHOICE_1 = 64;
+export const ACTION_CHOICE_2 = 128;
+export const ACTION_CHOICE_3 = 256;
 
 const THRUST_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
 
@@ -14,6 +17,7 @@ export function createInput(canvas) {
   const down = new Set();
   let actions = 0;
   let pointerConfirm = false;
+  let pointerAt = null;
 
   function onKeyDown(event) {
     if (event.repeat) return;
@@ -29,6 +33,12 @@ export function createInput(canvas) {
       actions |= ACTION_CONTINUE;
     } else if (event.code === 'KeyM') {
       actions |= ACTION_MUTE;
+    } else if (event.code === 'Digit1') {
+      actions |= ACTION_CHOICE_1;
+    } else if (event.code === 'Digit2') {
+      actions |= ACTION_CHOICE_2;
+    } else if (event.code === 'Digit3') {
+      actions |= ACTION_CHOICE_3;
     }
     if (THRUST_KEYS.has(event.code)) event.preventDefault();
   }
@@ -37,8 +47,13 @@ export function createInput(canvas) {
     down.delete(event.code);
   }
 
-  function onPointerDown() {
+  function onPointerDown(event) {
     pointerConfirm = true;
+    const rect = canvas.getBoundingClientRect();
+    pointerAt = {
+      x: (event.clientX - rect.left) * (1280 / rect.width),
+      y: (event.clientY - rect.top) * (720 / rect.height),
+    };
   }
 
   window.addEventListener('keydown', onKeyDown);
@@ -70,6 +85,12 @@ export function createInput(canvas) {
       const taken = actions;
       actions = 0;
       return taken;
+    },
+    /** The last pointer-down in logical field coordinates, or null. */
+    takePointer() {
+      const at = pointerAt;
+      pointerAt = null;
+      return at;
     },
     /** Held keys, for the autopilot's screenshots and tests. */
     setKey(code, held) {

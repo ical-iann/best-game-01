@@ -1,17 +1,18 @@
 // Nova Harvest — boot and the one loop: input is read every frame, the world
 // advances in fixed 1/60 s steps (several in a slow frame, none in a fast one),
-// and the renderer paints what is there. The game moves between five screens:
-// title, play, paused, game over and victory.
+// and the renderer paints what is there. The game moves between six screens:
+// title, play, paused, upgrade, game over and victory.
 //
-// ?seed=N fixes the spawn pattern. ?shot=menu|play|action|over (with &seed=N)
-// stages that scene instead of running the loop, paints it twice and sets
-// window.__shotReady for a screenshot.
+// ?seed=N fixes the spawn pattern. ?shot=menu|play|win|over|upgrade (with
+// &seed=N) stages that scene instead of running the loop, paints it twice and
+// sets window.__shotReady for a screenshot.
 import { BEST_KEY, SKIFF, STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createAudio } from './audio.js';
-import { createWorld, EVENT_HIT, EVENT_OVER, EVENT_PULSE, EVENT_WAVE, EVENT_WIN } from './world.js';
-import { ACTION_CONFIRM, ACTION_CONTINUE, ACTION_MUTE, ACTION_PAUSE, ACTION_PULSE, ACTION_RESTART, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
+import { createWorld, EVENT_BOSS, EVENT_CELL, EVENT_HIT, EVENT_OVER, EVENT_PULSE, EVENT_SHARD, EVENT_SHIELD, EVENT_WAVE, EVENT_WIN } from './world.js';
+import { ACTION_CHOICE_1, ACTION_CHOICE_2, ACTION_CHOICE_3, ACTION_CONFIRM, ACTION_CONTINUE, ACTION_MUTE, ACTION_PAUSE, ACTION_PULSE, ACTION_RESTART, createInput } from './input.js';
+import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_UPGRADE, SCREEN_WIN, UPGRADE_CARDS } from './render.js';
+import { applyUpgrade, rollUpgrades } from './upgrades.js';
 import { stageShot } from './shots.js';
 
 /** The longest frame the loop catches up on; a longer stall is dropped, not replayed. */
@@ -48,7 +49,7 @@ function runShot(name) {
   const scene = stageShot(name, world);
   let painted = 0;
   function paint() {
-    renderer.draw(world.state, scene.screen, scene.best);
+    renderer.draw(world.state, scene.screen, scene.best, scene.choices ?? null);
     painted += 1;
     if (painted < 2) requestAnimationFrame(paint);
     else window.__shotReady = true;
@@ -58,20 +59,25 @@ function runShot(name) {
 
 function runGame() {
   const input = createInput(canvas);
+  // The upgrade rolls draw from their own stream, so a seed replays one run.
+  const upgradeRandom = createRandom((seed ^ 0x9e3779b9) >>> 0);
   let screen = SCREEN_TITLE;
   let best = readBest();
+  let choices = null;
   let accumulator = 0;
   let last = performance.now();
 
-  // The debug handle the play-tests read: the live screen and score, nothing else.
-  window.__game = { screen, score: 0, wave: 1, hull: SKIFF.hull, combo: 0, dronesLeft: 0 };
+  // The debug handle the play-tests read: the live screen and score, the foes
+  // still to clear, and the upgrade choices on offer, nothing else.
+  window.__game = { screen, score: 0, wave: 1, hull: SKIFF.hull, combo: 0, foesLeft: 0, upgrades: null };
   function syncDebug() {
     window.__game.screen = screen;
     window.__game.score = world.state.score;
     window.__game.wave = world.state.wave;
     window.__game.hull = world.state.player.hull;
     window.__game.combo = world.state.combo;
-    window.__game.dronesLeft = world.state.dronesLeft;
+    window.__game.foesLeft = world.state.foesLeft;
+    window.__game.upgrades = choices ? choices.map((choice) => choice.id) : null;
   }
 
   // Screen readers (and anyone watching the page's text) hear the screen changes and each hit.
@@ -83,6 +89,7 @@ function runGame() {
     audio.unlock();
     world.reset();
     accumulator = 0;
+    choices = null;
     screen = SCREEN_PLAY;
     announce(`Playing. ${SKIFF.hull} hull. Collect shards, dodge mines, clear 5 waves.`);
     syncDebug();
@@ -110,11 +117,44 @@ function runGame() {
     syncDebug();
   }
 
+  function openUpgrades() {
+    choices = rollUpgrades(upgradeRandom);
+    screen = SCREEN_UPGRADE;
+    audio.wave();
+    announce(`Wave ${world.state.wave - 1} clear. Choose an upgrade: ${choices.map((choice, index) => `${index + 1}, ${choice.name}`).join('; ')}.`);
+    syncDebug();
+  }
+
+  function pickUpgrade(index) {
+    if (!choices || index < 0 || index >= choices.length) return;
+    const picked = choices[index];
+    applyUpgrade(world.state, picked.id);
+    choices = null;
+    screen = SCREEN_PLAY;
+    audio.upgrade();
+    announce(`Upgrade taken: ${picked.name}. Wave ${world.state.wave} incoming.`);
+    syncDebug();
+  }
+
   function handleActions() {
     const actions = input.takeActions();
+    const pointer = input.takePointer();
     if (actions & ACTION_MUTE) {
       const muted = audio.toggleMute();
       announce(muted ? 'Muted.' : 'Sound on.');
+    }
+    if (screen === SCREEN_UPGRADE) {
+      if (actions & ACTION_CHOICE_1) { pickUpgrade(0); return; }
+      if (actions & ACTION_CHOICE_2) { pickUpgrade(1); return; }
+      if (actions & ACTION_CHOICE_3) { pickUpgrade(2); return; }
+      if (pointer) {
+        const hit = UPGRADE_CARDS.findIndex((card) => (
+          pointer.x >= card.x && pointer.x <= card.x + card.w
+          && pointer.y >= card.y && pointer.y <= card.y + card.h
+        ));
+        if (hit >= 0) { pickUpgrade(hit); return; }
+      }
+      return;
     }
     if (screen === SCREEN_TITLE && (actions & ACTION_CONFIRM)) {
       startGame();
@@ -150,8 +190,14 @@ function runGame() {
       return;
     }
     if (screen === SCREEN_PLAY && (actions & ACTION_PULSE)) {
-      if (world.firePulse()) audio.pulse();
-      else audio.denied();
+      const result = world.firePulse();
+      if (result) {
+        audio.pulse();
+        if (result.events & EVENT_PULSE) audio.droneDown();
+        if (result.events & EVENT_BOSS) audio.bossDown();
+      } else {
+        audio.denied();
+      }
     }
   }
 
@@ -168,8 +214,13 @@ function runGame() {
         audio.hit();
         announce(world.state.player.hull === 1 ? 'Hit. 1 hull left.' : `Hit. ${world.state.player.hull} hull left.`);
       }
-      if (events & EVENT_WAVE) audio.wave();
-      if (events & EVENT_PULSE) audio.droneDown();
+      if (events & EVENT_SHIELD) {
+        audio.shield();
+        announce('Shield absorbed the hit.');
+      }
+      if (events & EVENT_SHARD) audio.collect(world.state.combo);
+      if (events & EVENT_CELL) audio.cell();
+      if (events & EVENT_WAVE) openUpgrades();
     }
   }
 
@@ -186,7 +237,7 @@ function runGame() {
     } else {
       accumulator = 0;
     }
-    renderer.draw(world.state, screen, best);
+    renderer.draw(world.state, screen, best, choices);
     syncDebug();
   }
 

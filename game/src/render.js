@@ -1,13 +1,22 @@
 // Nova Harvest — everything the player sees: the neon field, the skiff, the HUD and
-// the five screens (title, play, paused, game over, victory). It only paints; it never
-// changes the world.
-import { COLORS, DRONE, FIELD, MINE, SHARD, SKIFF } from './config.js';
+// the six screens (title, play, paused, upgrade, game over, victory). It only
+// paints; it never changes the world.
+import { BOSS, CELL, COLORS, DARTER, DRONE, FIELD, MINE, MINI, SHARD, SKIFF, SPLITTER } from './config.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
 export const SCREEN_PAUSED = 'paused';
+export const SCREEN_UPGRADE = 'upgrade';
 export const SCREEN_OVER = 'over';
 export const SCREEN_WIN = 'win';
+
+// The three upgrade cards, in logical field coordinates: main.js hit-tests
+// clicks against these, so the layout lives here beside the drawing.
+export const UPGRADE_CARDS = [
+  { x: 160, y: 270, w: 300, h: 200 },
+  { x: 490, y: 270, w: 300, h: 200 },
+  { x: 820, y: 270, w: 300, h: 200 },
+];
 
 const TAU = Math.PI * 2;
 
@@ -106,6 +115,187 @@ function drawDrone(ctx, drone) {
   ctx.beginPath();
   ctx.arc(0, 0, r * 0.32, 0, TAU);
   ctx.fill();
+  ctx.restore();
+}
+
+function drawDarter(ctx, darter) {
+  const r = DARTER.radius;
+  ctx.save();
+  ctx.translate(darter.x, darter.y);
+  ctx.rotate(Math.atan2(darter.vy, darter.vx));
+  ctx.shadowColor = COLORS.darter;
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = COLORS.darter;
+  ctx.beginPath();
+  ctx.moveTo(r + 6, 0);
+  ctx.lineTo(-r, r * 0.8);
+  ctx.lineTo(-r * 0.4, 0);
+  ctx.lineTo(-r, -r * 0.8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = COLORS.darterCore;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.3, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSplitter(ctx, splitter) {
+  const r = SPLITTER.radius;
+  ctx.save();
+  ctx.translate(splitter.x, splitter.y);
+  ctx.rotate(splitter.phase * 0.3);
+  ctx.shadowColor = COLORS.splitter;
+  ctx.shadowBlur = 16;
+  ctx.strokeStyle = COLORS.splitter;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index / 8) * TAU;
+    const x = Math.cos(angle) * r;
+    const y = Math.sin(angle) * r;
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  ctx.fillStyle = COLORS.splitterCore;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.32, 0, TAU);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(-r * 0.4, -r * 0.35, r * 0.14, 0, TAU);
+  ctx.arc(r * 0.4, r * 0.3, r * 0.14, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawMini(ctx, mini) {
+  const r = MINI.radius;
+  ctx.save();
+  ctx.translate(mini.x, mini.y);
+  ctx.rotate(mini.phase);
+  ctx.shadowColor = COLORS.mini;
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = COLORS.mini;
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.lineTo(-r, r * 0.7);
+  ctx.lineTo(-r, -r * 0.7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawBoss(ctx, boss) {
+  const r = BOSS.radius;
+  const wobble = Math.sin(boss.phase) * 3;
+  ctx.save();
+  ctx.translate(boss.x, boss.y);
+  ctx.rotate(boss.phase * 0.25);
+  ctx.shadowColor = COLORS.boss;
+  ctx.shadowBlur = 26;
+  ctx.fillStyle = COLORS.boss;
+  ctx.beginPath();
+  for (let index = 0; index < 10; index += 1) {
+    const angle = (index / 10) * TAU;
+    const rad = index % 2 === 0 ? r + 10 + wobble : r - 6;
+    const x = Math.cos(angle) * rad;
+    const y = Math.sin(angle) * rad;
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = COLORS.bossCore;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.42, 0, TAU);
+  ctx.fill();
+  ctx.fillStyle = COLORS.boss;
+  ctx.beginPath();
+  ctx.arc(-r * 0.18, -r * 0.08, r * 0.12, 0, TAU);
+  ctx.arc(r * 0.18, -r * 0.08, r * 0.12, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+  // The Warden's health bar, always visible while it lives.
+  const barW = 110;
+  const barX = boss.x - barW / 2;
+  const barY = boss.y - r - 26;
+  ctx.save();
+  ctx.fillStyle = 'rgba(120, 140, 180, 0.35)';
+  ctx.beginPath();
+  ctx.roundRect(barX, barY, barW, 9, 4);
+  ctx.fill();
+  ctx.fillStyle = COLORS.boss;
+  ctx.beginPath();
+  ctx.roundRect(barX, barY, barW * (boss.hp / boss.maxHp), 9, 4);
+  ctx.fill();
+  ctx.font = '700 13px ui-sans-serif, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = COLORS.bossCore;
+  ctx.fillText('VOID WARDEN', boss.x, barY - 8);
+  ctx.restore();
+}
+
+function drawCell(ctx, cell) {
+  const r = CELL.radius;
+  const pulse = 1 + Math.sin(cell.phase) * 0.15;
+  ctx.save();
+  ctx.translate(cell.x, cell.y);
+  if (cell.kind === 'shield') {
+    ctx.shadowColor = COLORS.shield;
+    ctx.shadowBlur = 16;
+    ctx.strokeStyle = COLORS.shield;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * pulse, 0, TAU);
+    ctx.stroke();
+    ctx.fillStyle = COLORS.shield;
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.55);
+    ctx.lineTo(r * 0.5, 0);
+    ctx.lineTo(0, r * 0.55);
+    ctx.lineTo(-r * 0.5, 0);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.shadowColor = COLORS.surge;
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = COLORS.surge;
+    ctx.beginPath();
+    ctx.moveTo(2, -r * pulse);
+    ctx.lineTo(-r * 0.55, r * 0.1);
+    ctx.lineTo(-r * 0.05, r * 0.1);
+    ctx.lineTo(-2, r * pulse);
+    ctx.lineTo(r * 0.55, -r * 0.1);
+    ctx.lineTo(r * 0.05, -r * 0.1);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawAsteroid(ctx, rock) {
+  ctx.save();
+  ctx.translate(rock.x, rock.y);
+  ctx.rotate(rock.rot);
+  ctx.fillStyle = 'rgba(38, 48, 84, 0.55)';
+  ctx.strokeStyle = 'rgba(90, 110, 170, 0.35)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let index = 0; index < rock.verts.length; index += 1) {
+    const angle = (index / rock.verts.length) * TAU;
+    const rad = rock.radius * rock.verts[index];
+    const x = Math.cos(angle) * rad;
+    const y = Math.sin(angle) * rad;
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -221,9 +411,15 @@ export function createRenderer(canvas) {
   }
 
   function drawEntities(state, screen) {
+    for (const rock of state.asteroids) drawAsteroid(ctx, rock);
     for (const shard of state.shards) drawShard(ctx, shard, state.time);
+    for (const cell of state.cells) drawCell(ctx, cell);
     for (const mine of state.mines) drawMine(ctx, mine);
     for (const drone of state.drones) drawDrone(ctx, drone);
+    for (const darter of state.darters) drawDarter(ctx, darter);
+    for (const splitter of state.splitters) drawSplitter(ctx, splitter);
+    for (const mini of state.minis) drawMini(ctx, mini);
+    if (state.boss && state.boss.active) drawBoss(ctx, state.boss);
     for (const particle of state.particles) {
       ctx.globalAlpha = Math.max(0, particle.life / particle.maxLife);
       ctx.fillStyle = particle.color;
@@ -247,8 +443,8 @@ export function createRenderer(canvas) {
       ctx.stroke();
       ctx.restore();
     }
-    // Score popups only read while playing; on the menu and end screens they
-    // would bleed through the panels.
+    // Score popups only read while playing; on the menu, upgrade and end
+    // screens they would bleed through the panels.
     if (screen === SCREEN_PLAY || screen === SCREEN_PAUSED) {
       for (const float of state.floats) {
         ctx.save();
@@ -281,9 +477,30 @@ export function createRenderer(canvas) {
     ctx.fillText(`WAVE ${state.wave}`, FIELD.width - 24, 40);
     ctx.font = '600 16px ui-sans-serif, system-ui, sans-serif';
     ctx.fillStyle = COLORS.muted;
-    ctx.fillText(`DRONES ${state.dronesLeft}`, FIELD.width - 24, 64);
+    ctx.fillText(`FOES ${state.foesLeft}`, FIELD.width - 24, 64);
     ctx.restore();
-    drawHull(ctx, state.player.hull, SKIFF.hull);
+    drawHull(ctx, state.player.hull, state.player.maxHull);
+    // An aegis shield shows as a ring beside the hull pips.
+    if (state.player.shield) {
+      ctx.save();
+      ctx.translate(28 + state.player.maxHull * 30 + 12, 88);
+      ctx.strokeStyle = COLORS.shield;
+      ctx.lineWidth = 3;
+      ctx.shadowColor = COLORS.shield;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(0, 0, 11, 0, TAU);
+      ctx.stroke();
+      ctx.fillStyle = COLORS.shield;
+      ctx.beginPath();
+      ctx.moveTo(0, -6);
+      ctx.lineTo(5, 0);
+      ctx.lineTo(0, 6);
+      ctx.lineTo(-5, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
     // Energy bar for the pulse blast.
     const barX = 24;
     const barY = FIELD.height - 34;
@@ -328,8 +545,8 @@ export function createRenderer(canvas) {
     ctx.restore();
     centerText(ctx, 'Salvage the field. Dodge the mines. Outrun the hunters.', cx, 282, 21, COLORS.muted, 600);
     centerText(ctx, 'WASD / ARROWS — fly      SPACE — pulse blast', cx, 340, 19, COLORS.text, 600);
-    centerText(ctx, 'Collect shards to build your combo · Clear 5 waves to win', cx, 372, 19, COLORS.text, 600);
-    centerText(ctx, 'P — pause      M — mute      R — restart', cx, 404, 17, COLORS.muted, 600);
+    centerText(ctx, 'Collect shards · Grab shield and surge cells · Beat the Void Warden', cx, 372, 19, COLORS.text, 600);
+    centerText(ctx, 'Clear a wave, pick an upgrade — 1, 2 or 3 · P — pause · M — mute · R — restart', cx, 404, 17, COLORS.muted, 600);
     centerText(ctx, best > 0 ? `BEST SCORE ${best}` : 'No runs yet — the field is yours.', cx, 452, 19, COLORS.gold, 700);
     const blink = Math.floor(state.time * 1.6) % 2 === 0;
     if (blink) centerText(ctx, 'PRESS SPACE OR CLICK TO START', cx, 500, 22, COLORS.shard, 800);
@@ -379,7 +596,41 @@ export function createRenderer(canvas) {
     centerText(ctx, 'P or Space to keep flying', cx, 390, 20, COLORS.muted, 600);
   }
 
-  function draw(state, screen, best) {
+  function drawUpgrade(state, choices) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(4, 6, 16, 0.62)';
+    ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+    ctx.restore();
+    centerText(ctx, `WAVE ${state.wave - 1} CLEAR — CHOOSE AN UPGRADE`, cx, 210, 34, COLORS.gold, 800);
+    centerText(ctx, 'Press 1, 2 or 3 — or click a card. The next wave waits.', cx, 248, 18, COLORS.muted, 600);
+    choices.forEach((choice, index) => {
+      const card = UPGRADE_CARDS[index];
+      ctx.save();
+      ctx.fillStyle = 'rgba(10, 16, 38, 0.95)';
+      ctx.strokeStyle = 'rgba(126, 240, 255, 0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(card.x, card.y, card.w, card.h, 14);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+      centerText(ctx, `${index + 1}`, card.x + card.w / 2, card.y + 42, 26, COLORS.pulse, 800);
+      centerText(ctx, choice.name, card.x + card.w / 2, card.y + 84, 23, COLORS.text, 800);
+      // Wrap the blurb over two lines at the card's width.
+      const words = choice.blurb.split(' ');
+      const lines = [''];
+      for (const word of words) {
+        const last = lines[lines.length - 1];
+        if ((`${last} ${word}`).trim().length > 26) lines.push(word);
+        else lines[lines.length - 1] = `${last} ${word}`.trim();
+      }
+      lines.forEach((line, lineIndex) => {
+        centerText(ctx, line, card.x + card.w / 2, card.y + 124 + lineIndex * 26, 17, COLORS.muted, 600);
+      });
+    });
+  }
+
+  function draw(state, screen, best, choices = null) {
     fit();
     ctx.save();
     if (state.shake > 0.5) {
@@ -388,11 +639,12 @@ export function createRenderer(canvas) {
     }
     drawSky(state);
     drawEntities(state, screen);
-    if (screen === SCREEN_PLAY || screen === SCREEN_PAUSED) drawHud(state, best);
+    if (screen === SCREEN_PLAY || screen === SCREEN_PAUSED || screen === SCREEN_UPGRADE) drawHud(state, best);
     if (screen === SCREEN_TITLE) drawTitle(state, best);
     if (screen === SCREEN_OVER) drawOver(state, best);
     if (screen === SCREEN_WIN) drawWin(state, best);
     if (screen === SCREEN_PAUSED) drawPaused();
+    if (screen === SCREEN_UPGRADE && choices) drawUpgrade(state, choices);
     ctx.restore();
   }
 
